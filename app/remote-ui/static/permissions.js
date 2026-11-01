@@ -123,11 +123,12 @@ function allPermissionSpecs(on, value) {
       missing: '',
       idle: 'Lets the Foreground app sensor name apps other than Kiosk Satellite.' },
     // The Local Media Session player reads other apps' sessions through
-    // it, so it counts as missing only while it is picked.
+    // it, so it counts as missing only while it is picked; the Doorbell
+    // reads the rings through it while it is switched on.
     { key: 'notificationAccess', name: 'Notification access', ask: 'notificationAccess',
-      needed: !value('sendspin.player_source') && value('sendspin.player') === 'session:*',
+      needed: (!value('sendspin.player_source') && value('sendspin.player') === 'session:*') || on('doorbell.enabled'),
       held: 'Now Playing can follow the apps playing on this device.',
-      missing: 'Without this Android lists no media sessions, so Now Playing cannot follow the apps playing on this device.',
+      missing: 'Without this Android lists no media sessions and the Doorbell sees no rings, so Now Playing cannot follow the apps playing on this device and a ring never opens its app.',
       idle: 'Lets Now Playing follow the apps playing on this device.' },
     { key: 'location', name: 'Location', ask: 'location',
       needed: on('btproxy.enabled') || on('location.enabled')

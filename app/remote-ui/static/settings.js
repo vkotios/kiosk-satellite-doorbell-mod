@@ -895,6 +895,35 @@ async function renderSettings({ cached = false } = {}) {
       sync();
     }
 
+    // The Doorbell's group answers for one grant: the notification
+    // access its rings arrive as. It shows only while the doorbell is
+    // switched on, following the toggle in place like the Launcher's
+    // group above.
+    {
+      const doorbellGroup = group('tab-doorbell', [
+        permRow('Notification access',
+          'The doorbell sees the rings the doorbell app announces.',
+          'Without this the doorbell sees no rings and never opens its '
+            + 'app. The grant screen appears on the tablet.',
+          'Grant on device', grantNotifications, pollNotifications),
+      ]);
+      const tab = document.getElementById('tab-doorbell');
+      const on = () => {
+        const cb = tab.querySelector(
+          '[data-key="doorbell.enabled"] input[type="checkbox"]');
+        return !!cb && cb.checked;
+      };
+      const sync = () => doorbellGroup.forEach((el) =>
+        el.classList.toggle('hidden', !on()));
+      // Delegated like the Launcher's, so the toggle is followed in
+      // place whether the tab rebuilds around it or not.
+      tab.addEventListener('change', (e) => {
+        const key = e.target.closest?.('[data-key]')?.dataset.key;
+        if (key === 'doorbell.enabled') setTimeout(sync, 50);
+      });
+      sync();
+    }
+
     // ── Home Launcher status (issue #219) ────────────────────────────────
     // The toggle above is intent; on devices without device ownership the
     // role itself needs a tap in a system dialog on the tablet. This row
