@@ -52,7 +52,7 @@ const devicePermissionDescriptions = <String, ({String title, String description
   'notificationAccess': (
     title: 'Notification access',
     description:
-        'Now Playing can follow the apps playing on this device.',
+        'Now Playing can follow the apps playing on this device, and the Doorbell can see a ring.',
   ),
   'location': (
     title: 'Location',

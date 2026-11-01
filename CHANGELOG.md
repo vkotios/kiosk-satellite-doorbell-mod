@@ -5,6 +5,7 @@ All notable changes to Kiosk Satellite are documented here. Full release notes f
 ## Unreleased
 
 ### Added
+- **Open the doorbell app on a ring.** A new **Doorbell** page opens the live view of a ringing doorbell app over the kiosk, such as the Eufy Security app, and brings the kiosk back after a time without a touch (75 seconds by default). One tap adds Eufy Security, or **Capture a doorbell** learns another app from its ring notification. It needs **Notification access**. A ring also sends the `esphome.kiosk_satellite_doorbell` Home Assistant event and the `DOORBELL_RINGING` Android broadcast. See [Doorbell](https://github.com/jxlarrea/kiosk-satellite/blob/main/docs/doorbell.md).
 - **Fine-tune the wake word and stop word from Home Assistant.** With **Expose kiosk entities** on, the kiosk adds **VS Wake word fine-tune** and **VS Stop word fine-tune** sliders from -10 to +10, next to **VS Wake word sensitivity**. They change **Fine-tune sensitivity** and **Fine-tune stop word sensitivity** on that kiosk, so an automation can lower them while the TV plays and raise them again when it stops (#1224).
 - **Stop an announcement from Home Assistant.** A new `announce_stop` ESPHome action stops the announcement playing on the kiosk, and one still fetching its audio never starts. It answers whether one was playing and never fails when nothing was, so a dismiss automation can always call it (#1239).
 

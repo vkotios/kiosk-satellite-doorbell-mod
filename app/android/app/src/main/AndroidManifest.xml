@@ -278,10 +278,13 @@
                 android:name="android.accessibilityservice"
                 android:resource="@xml/headless_keys"/>
         </service>
-        <!-- The Media Session player source: Android lists other apps'
-             media sessions only to an app holding "Notification access",
-             which names a listener service. This one reads no
-             notifications; see MediaSessionListener. -->
+        <!-- The Notification access listener: Android lists other apps'
+             media sessions (the Media Session player source) and posts
+             notifications (the Doorbell) only to an app holding
+             "Notification access", which names a listener service. It
+             reads a notification only for the Doorbell, and only from
+             the doorbell apps you saved or while you capture one; see
+             MediaSessionListener. -->
         <service
             android:name=".MediaSessionListener"
             android:exported="false"

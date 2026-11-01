@@ -187,7 +187,7 @@ With **Player source** on "This device", the **Player** dropdown also offers **L
 
 The app offers the transport buttons its session allows, with a seek bar when it reports a track length. Volume is the device's media volume, since the app plays through the device. Shuffle, repeat, the heart and the queue are not offered: Android's media session API gives no way to read them back.
 
-Android only lists other apps' sessions to an app with **Notification access**, so the page shows a **Required system permissions** group with that grant while Local Media Session is picked. Kiosk Satellite reads no notifications with it.
+Android only lists other apps' sessions to an app with **Notification access**, so the page shows a **Required system permissions** group with that grant while Local Media Session is picked. Kiosk Satellite reads no notifications with it. The Doorbell page uses the same grant; see [Doorbell](doorbell.md).
 
 ## AirPlay
 
