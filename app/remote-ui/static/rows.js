@@ -724,25 +724,37 @@ export function settingRow(s) {
       const value = (state.settings || []).find((o) => o.key === s.key)?.value ?? s.value;
       try {
         const list = JSON.parse(value || '[]');
-        return Array.isArray(list) ? list : [];
+        return Array.isArray(list)
+          ? list.filter((e) => e && typeof e === 'object' && typeof e.id === 'string' && e.id.trim())
+          : [];
       } catch (_) { return []; }
     };
     const controls = document.createElement('div');
     controls.style.cssText =
       'display:flex; flex-direction:column; gap:8px; align-items:flex-end; min-width:0; max-width:60%; flex:0 1 auto';
+    let busy = false;
+    const setBusy = (on) => { busy = on; controls.querySelectorAll('button').forEach((b) => { b.disabled = on; }); };
     const run = async (command, body) => {
+      if (busy) return;
+      setBusy(true);
       try {
         const res = await api(`/api/commands/${command}`, { method: 'POST', body: JSON.stringify(body) });
         const out = await res.json().catch(() => null);
         if (!res.ok || out?.ok !== true) {
           throw new Error(out?.error || 'Could not update the doorbells. Try again.');
         }
+        clearRowError(row);
+        try {
+          await loadSettings();
+        } catch (_) {
+          showRowError(row, 'Saved, but the list could not be reloaded. Reload the page.', null);
+        }
       } catch (error) {
         showRowError(row, error?.message || 'Could not update the doorbells. Try again.', null);
         return;
+      } finally {
+        setBusy(false);
       }
-      clearRowError(row);
-      await loadSettings();
     };
     const paint = () => {
       controls.textContent = '';
