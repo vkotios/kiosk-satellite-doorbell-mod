@@ -217,7 +217,11 @@ class DoorbellBridge(
     /** Send the held tap action. False when there is none, or Android
      *  refuses it. */
     private fun fire(key: String): Boolean {
-        val tap = taps.remove(key)?.first ?: return false
+        val held = taps.remove(key) ?: return false
+        // A tap Dart asks for after the hold is over is refused, the same as
+        // one that was purged.
+        if (SystemClock.elapsedRealtime() - held.second > KEEP_MS) return false
+        val tap = held.first
         return try {
             val options = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
                 // Android 14 asks the sender to opt in to a background start.

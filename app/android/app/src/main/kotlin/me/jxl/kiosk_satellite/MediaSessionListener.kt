@@ -13,9 +13,9 @@ import android.util.Log
  * (MediaSessionManager.getActiveSessions), so the Media Session player
  * source follows other apps through [MediaSessionBridge].
  *
- * It reads a notification only when it matches one of the saved signatures
- * Dart pushed, or during the capture window the user starts (60 seconds by default), and
- * drops any other on the first line, never read, stored or reported. A
+ * Other notifications are looked at only by package, channel and flags;
+ * their title and extras are read only for a saved doorbell's ring, or
+ * during the capture window the user starts, and are never stored or logged. A
  * matched ring's tap action goes to [DoorbellBridge], so the right
  * doorbell's live view can open over the kiosk.
  */
@@ -36,6 +36,15 @@ class MediaSessionListener : NotificationListenerService() {
     }
 
     override fun onNotificationPosted(sbn: StatusBarNotification) {
+        try {
+            handlePosted(sbn)
+        } catch (e: Exception) {
+            // Only the class name: the message could carry notification text.
+            Log.w(TAG, "notification skipped: ${e.javaClass.simpleName}")
+        }
+    }
+
+    private fun handlePosted(sbn: StatusBarNotification) {
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O) return
         val notification = sbn.notification
         val channel = notification.channelId
