@@ -13,17 +13,15 @@ import android.util.Log
  * (MediaSessionManager.getActiveSessions), so the Media Session player
  * source follows other apps through [MediaSessionBridge].
  *
- * It also looks at notifications from one hard-coded package, the Eufy
- * Security app, and hands the tap action of a ring notification to
- * [DoorbellBridge], so the right doorbell's live view can open over the
- * kiosk. A notification from any other app is dropped on the first line,
- * never read, stored or reported.
+ * It reads a notification only when it matches one of the saved signatures
+ * Dart pushed, or during the capture window the user starts (60 seconds by default), and
+ * drops any other on the first line, never read, stored or reported. A
+ * matched ring's tap action goes to [DoorbellBridge], so the right
+ * doorbell's live view can open over the kiosk.
  */
 class MediaSessionListener : NotificationListenerService() {
     companion object {
         private const val TAG = "Doorbell"
-        private const val PACKAGE = "com.oceanwing.battery.cam"
-        private const val CHANNEL_PREFIX = "com.ocean.battery.cam.ring"
         // Android reposts a ring a few seconds after it first posts it.
         private const val DEDUPE_MS = 20_000L
     }
@@ -38,11 +36,22 @@ class MediaSessionListener : NotificationListenerService() {
     }
 
     override fun onNotificationPosted(sbn: StatusBarNotification) {
-        if (sbn.packageName != PACKAGE) return
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O) return
         val notification = sbn.notification
-        val channel = notification.channelId ?: return
-        if (!channel.startsWith(CHANNEL_PREFIX)) return
+        val channel = notification.channelId
+        if (DoorbellBridge.capturing()) {
+            // The window reports the next notification from another app,
+            // once, and never also treats it as a ring.
+            if (sbn.packageName == applicationContext.packageName) return
+            if (channel == null) return
+            if (notification.flags and Notification.FLAG_ONGOING_EVENT != 0) return
+            if (notification.flags and Notification.FLAG_GROUP_SUMMARY != 0) return
+            val title = notification.extras.getCharSequence(Notification.EXTRA_TITLE)?.toString().orEmpty()
+            DoorbellBridge.capture(sbn.packageName, channel, title, appLabel(sbn.packageName))
+            return
+        }
+        val signature = DoorbellBridge.match(sbn.packageName, channel)
+        if (signature == null) return
 
         val now = SystemClock.elapsedRealtime()
         handledAt.values.removeAll { now - it > 60_000L }
@@ -59,10 +68,20 @@ class MediaSessionListener : NotificationListenerService() {
             Log.w(TAG, "ring '$title' has no tap action")
             return
         }
-        if (DoorbellBridge.ring(sbn.packageName, sbn.key, title, tap)) {
+        if (DoorbellBridge.ring(sbn.packageName, sbn.key, title, signature.id, tap)) {
             Log.i(TAG, "ring '$title': handed to the app, key ${sbn.key}")
         } else {
             Log.w(TAG, "ring '$title' dropped: the app is not up yet")
+        }
+    }
+
+    /** The other app's label, or its package name when it has none. */
+    private fun appLabel(pkg: String): String {
+        return try {
+            val info = packageManager.getApplicationInfo(pkg, 0)
+            packageManager.getApplicationLabel(info)?.toString() ?: pkg
+        } catch (e: Exception) {
+            pkg
         }
     }
 }
