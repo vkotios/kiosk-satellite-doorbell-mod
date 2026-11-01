@@ -299,6 +299,13 @@ class AppLauncherManager extends Manager with WidgetsBindingObserver {
     _launchSub = bus.on<AppLaunched>().listen((e) {
       _launchedAt = DateTime.now();
       _launchReturnSeconds = e.returnAfterSeconds;
+      // A second ring while the first live view is open restarts the
+      // clock: no new pause arrives to do it.
+      if (e.returnAfterSeconds != null &&
+          _returnTimer != null &&
+          _returnTimer!.isActive) {
+        _startClock(e.returnAfterSeconds!);
+      }
       // The overlay's job ended the moment another app came up over it.
       visible.value = false;
     });
