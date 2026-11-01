@@ -66,12 +66,13 @@ class DoorbellBridge(
         }
 
         /** Report this notification as the one the window waited for, and
-         *  close the window. False while no window is open. */
+         *  close the window at once. Must be called on the main thread, where
+         *  the listener callbacks arrive. False while no window is open. */
         fun capture(pkg: String, channelId: String, title: String, appLabel: String): Boolean {
             val bridge = instance ?: return false
             if (!bridge.isCaptureWindowOpen()) return false
-            val token = bridge.captureToken
-            bridge.main.post { bridge.onCaptured(pkg, channelId, title, appLabel, token) }
+            bridge.closeCapture()
+            bridge.main.post { bridge.onCaptured(pkg, channelId, title, appLabel) }
             return true
         }
     }
@@ -95,14 +96,18 @@ class DoorbellBridge(
     init {
         instance = this
         channel.setMethodCallHandler { call, result ->
-            when (call.method) {
-                "fire" -> result.success(fire(call.argument<String>("key") ?: ""))
-                "configure" -> result.success(configure(call.argument<Any?>("signatures")))
-                "startCapture" -> result.success(
-                    startCapture(call.argument<Number>("seconds")),
-                )
-                "stopCapture" -> result.success(stopCapture())
-                else -> result.notImplemented()
+            try {
+                when (call.method) {
+                    "fire" -> result.success(fire(call.argument<String>("key") ?: ""))
+                    "configure" -> result.success(configure(call.argument<Any?>("signatures")))
+                    "startCapture" -> result.success(
+                        startCapture(call.argument<Number>("seconds")),
+                    )
+                    "stopCapture" -> result.success(stopCapture())
+                    else -> result.notImplemented()
+                }
+            } catch (e: Exception) {
+                result.error("bad_arguments", e.message, null)
             }
         }
     }
@@ -162,7 +167,7 @@ class DoorbellBridge(
         val windowMs = (seconds?.toLong() ?: CAPTURE_DEFAULT_SECONDS)
             .coerceIn(CAPTURE_MIN_SECONDS, CAPTURE_MAX_SECONDS) * 1000
         captureToken++
-        captureDeadline = SystemClock.elapsedRealtime() + windowMs
+        captureDeadline = SystemClock.uptimeMillis() + windowMs
         val token = captureToken
         main.postDelayed({
             if (captureToken == token) {
@@ -182,11 +187,9 @@ class DoorbellBridge(
         return true
     }
 
-    /** Main thread only. Report the notification that ended the window
-     *  [token] belongs to, unless that window ended first. */
-    private fun onCaptured(pkg: String, channelId: String, title: String, appLabel: String, token: Int) {
-        if (captureToken != token) return
-        closeCapture()
+    /** Main thread only. Report the notification that ended the window the
+     *  caller already closed. */
+    private fun onCaptured(pkg: String, channelId: String, title: String, appLabel: String) {
         push(
             "captured",
             mapOf(
@@ -207,7 +210,7 @@ class DoorbellBridge(
     }
 
     /** Main thread only. False once the window's deadline has passed. */
-    private fun isCaptureWindowOpen(): Boolean = SystemClock.elapsedRealtime() < captureDeadline
+    private fun isCaptureWindowOpen(): Boolean = SystemClock.uptimeMillis() < captureDeadline
 
     /** Send the held tap action. False when there is none, or Android
      *  refuses it. */

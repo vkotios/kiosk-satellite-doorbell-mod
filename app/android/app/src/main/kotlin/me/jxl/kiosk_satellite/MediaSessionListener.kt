@@ -14,7 +14,7 @@ import android.util.Log
  * source follows other apps through [MediaSessionBridge].
  *
  * It reads a notification only when it matches one of the saved signatures
- * Dart pushed, or during the 60-second capture window the user starts, and
+ * Dart pushed, or during the capture window the user starts (60 seconds by default), and
  * drops any other on the first line, never read, stored or reported. A
  * matched ring's tap action goes to [DoorbellBridge], so the right
  * doorbell's live view can open over the kiosk.
