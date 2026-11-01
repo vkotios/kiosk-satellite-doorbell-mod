@@ -108,6 +108,7 @@ class KioskManager extends Manager with WidgetsBindingObserver {
   static const _mediaSessionsChannel = MethodChannel(
     'kiosk_satellite/media_sessions',
   );
+  static const _doorbellChannel = MethodChannel('kiosk_satellite/doorbell');
 
   @override
   String get name => 'kiosk';
@@ -250,6 +251,40 @@ class KioskManager extends Manager with WidgetsBindingObserver {
             }),
             notOpened: '$package is not installed, or has no app to open',
             unavailable: 'opening apps is Android-only',
+          );
+        },
+      ),
+    );
+
+    commands.register(
+      Command(
+        name: 'openNotificationAction',
+        description:
+            'Fire the tap action of a ring notification the doorbell '
+            'listener is holding, so the app that rang opens on the right '
+            'camera over the kiosk. Unpins first like launchApp. Fails when '
+            'the notification is gone or Android refuses the tap.',
+        params: const {
+          'key': 'Notification key the doorbell ring reported',
+          'package': 'Android package of the app that rang',
+          'label': 'What to call the ring in the log',
+          'returnAfterSeconds':
+              'Idle seconds before the kiosk comes back; omit to use the '
+              "launcher's own return",
+        },
+        handler: (p) async {
+          final key = '${p['key'] ?? ''}'.trim();
+          if (key.isEmpty) return const CommandResult.fail('key required');
+          final package = '${p['package'] ?? ''}'.trim();
+          final label = '${p['label'] ?? ''}'.trim();
+          return _openOverKiosk(
+            what: label.isEmpty ? 'notification $key' : label,
+            package: package.isEmpty ? null : package,
+            returnAfterSeconds: (p['returnAfterSeconds'] as num?)?.toInt(),
+            open: () =>
+                _doorbellChannel.invokeMethod<bool>('fire', {'key': key}),
+            notOpened: 'the notification is gone, or its tap action was refused',
+            unavailable: 'opening a notification is Android-only',
           );
         },
       ),
@@ -813,6 +848,7 @@ class KioskManager extends Manager with WidgetsBindingObserver {
   Future<CommandResult> _openOverKiosk({
     required String what,
     String? package,
+    int? returnAfterSeconds,
     required Future<bool?> Function() open,
     required String notOpened,
     required String unavailable,
@@ -829,7 +865,12 @@ class KioskManager extends Manager with WidgetsBindingObserver {
       // Stamped here as well as off the bus: the pause can land before
       // the bus delivers, and a late stamp is a reclaim that fires.
       _appLaunchedAt = DateTime.now();
-      bus.publish(AppLaunched(package: package ?? what));
+      bus.publish(
+        AppLaunched(
+          package: package ?? what,
+          returnAfterSeconds: returnAfterSeconds,
+        ),
+      );
       return const CommandResult.ok();
     } on PlatformException catch (e) {
       if (wasPinned) await _apply();

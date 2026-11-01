@@ -352,6 +352,67 @@ void main() {
       });
     });
 
+    test('a doorbell launch runs its own idle time, touches included', () async {
+      await armed();
+      fakeAsync((async) {
+        bus.publish(
+          const AppLaunched(package: 'com.a', returnAfterSeconds: 75),
+        );
+        async.flushMicrotasks();
+        launcher.didChangeAppLifecycleState(AppLifecycleState.paused);
+        async.flushMicrotasks();
+        // Past the launcher's own 30s, short of the doorbell's 75s.
+        async.elapse(const Duration(seconds: 74));
+        expect(executed, isEmpty);
+        // A touch starts the doorbell's time over, not the launcher's.
+        launcher.touchSeen();
+        async.elapse(const Duration(seconds: 74));
+        expect(executed, isEmpty);
+        async.elapse(const Duration(seconds: 2));
+        async.flushMicrotasks();
+        expect(executed, ['bringToFront']);
+      });
+    });
+
+    test('a doorbell launch returns even with the launcher off', () async {
+      await build({
+        'ks.launcher.enabled': false,
+        'ks.launcher.auto_return': false,
+      });
+      final binding = TestWidgetsFlutterBinding.instance;
+      binding.handleAppLifecycleStateChanged(AppLifecycleState.paused);
+      addTearDown(
+        () => binding.handleAppLifecycleStateChanged(AppLifecycleState.resumed),
+      );
+      fakeAsync((async) {
+        bus.publish(
+          const AppLaunched(package: 'com.a', returnAfterSeconds: 75),
+        );
+        async.flushMicrotasks();
+        launcher.didChangeAppLifecycleState(AppLifecycleState.paused);
+        async.flushMicrotasks();
+        async.elapse(const Duration(seconds: 76));
+        async.flushMicrotasks();
+        expect(executed, ['bringToFront']);
+      });
+    });
+
+    test('a plain launch after a doorbell one uses the launcher time', () async {
+      await armed();
+      fakeAsync((async) {
+        bus.publish(
+          const AppLaunched(package: 'com.a', returnAfterSeconds: 75),
+        );
+        bus.publish(const AppLaunched(package: 'com.b'));
+        async.flushMicrotasks();
+        launcher.didChangeAppLifecycleState(AppLifecycleState.paused);
+        async.flushMicrotasks();
+        async.elapse(const Duration(seconds: 31));
+        async.flushMicrotasks();
+        expect(executed, ['bringToFront']);
+      });
+    });
+
     test('a touch in the other app starts the clock over', () async {
       await armed();
       fakeAsync((async) {
@@ -548,6 +609,25 @@ void main() {
         playing = true;
         launch(async);
         async.elapse(const Duration(seconds: 31));
+        async.flushMicrotasks();
+        expect(executed, ['bringToFront']);
+        expect(asked, 0);
+      });
+    });
+
+    test('a doorbell launch is not held by its own live view', () async {
+      await armed();
+      fakeAsync((async) {
+        // Eufy's live view reads as a call to Android.
+        calling = true;
+        playing = true;
+        bus.publish(
+          const AppLaunched(package: 'com.a', returnAfterSeconds: 75),
+        );
+        async.flushMicrotasks();
+        launcher.didChangeAppLifecycleState(AppLifecycleState.paused);
+        async.flushMicrotasks();
+        async.elapse(const Duration(seconds: 76));
         async.flushMicrotasks();
         expect(executed, ['bringToFront']);
         expect(asked, 0);

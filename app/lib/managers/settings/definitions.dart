@@ -1482,6 +1482,40 @@ const launcherMenu = SettingDef<bool>(
   linksTo: 'ui.drawer_items',
 );
 
+// A doorbell that rings in another app (Eufy Security today): when the
+// app announces the ring, the kiosk fires that notification's own tap
+// action, which opens the camera that rang, and the launcher's auto-return
+// brings the kiosk back. Needs the Notification access grant, the same as
+// the media session source. Hidden until it has its own page and
+// translations: set it through the remote API for now.
+// TEMP (tablet stage): defaults on, since a hidden setting has no switch
+// to reach it. The PR build defaults it off.
+const doorbellEnabled = SettingDef<bool>(
+  key: 'doorbell.enabled',
+  type: SettingType.boolean,
+  defaultValue: true,
+  title: 'Open the doorbell app on a ring',
+  description:
+      'When the Eufy Security app announces a ring, open that '
+      "doorbell's live view over the kiosk. Needs Notification access.",
+  category: 'Launcher',
+  hidden: true,
+);
+
+const doorbellReturnSeconds = SettingDef<num>(
+  key: 'doorbell.return_seconds',
+  type: SettingType.number,
+  defaultValue: 75,
+  min: 10,
+  title: 'Return after a ring (seconds)',
+  description:
+      'Time without a touch in the doorbell app before the kiosk comes '
+      'back.',
+  category: 'Launcher',
+  dependsOn: 'doorbell.enabled',
+  hidden: true,
+);
+
 // ── Home Launcher ──────────────────────────────────────────────────────
 // The HOME role (issue #219): the kiosk registers as the device's home
 // app and replaces the OEM launcher outright. The system starts it at
@@ -13207,6 +13241,8 @@ const List<SettingDef<Object>> allSettings = [
   launcherAutoReturnSeconds,
   launcherAutoReturnMedia,
   launcherMenu,
+  doorbellEnabled,
+  doorbellReturnSeconds,
   // The Screen & Audio page: screen first, then the volume mixer, then the
   // hand-built device pickers, then capture tuning. Both UIs render this
   // category in this order.

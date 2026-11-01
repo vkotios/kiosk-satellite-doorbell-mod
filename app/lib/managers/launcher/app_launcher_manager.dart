@@ -99,6 +99,10 @@ class AppLauncherManager extends Manager with WidgetsBindingObserver {
   DateTime? _launchedAt;
   static const _armWindow = Duration(seconds: 15);
 
+  /// The idle time the launch brought with it (a doorbell ring), null for
+  /// a launch that follows the launcher's own setting.
+  int? _launchReturnSeconds;
+
   /// What the clock ran out on and now waits for to end, at which point
   /// the full idle time starts over. Null while the clock runs plain.
   _Hold? _heldBy;
@@ -292,8 +296,9 @@ class AppLauncherManager extends Manager with WidgetsBindingObserver {
       ),
     );
 
-    _launchSub = bus.on<AppLaunched>().listen((_) {
+    _launchSub = bus.on<AppLaunched>().listen((e) {
       _launchedAt = DateTime.now();
+      _launchReturnSeconds = e.returnAfterSeconds;
       // The overlay's job ended the moment another app came up over it.
       visible.value = false;
     });
@@ -354,14 +359,17 @@ class AppLauncherManager extends Manager with WidgetsBindingObserver {
     if (state == AppLifecycleState.paused) {
       final launched = _launchedAt;
       // Both flags at runtime: the stored auto-return switch survives the
-      // master switch going off, and must not act while it is.
+      // master switch going off, and must not act while it is. A launch
+      // that names its own idle time (a doorbell ring) asked for the
+      // return itself and does not depend on either.
       if (launched == null ||
           DateTime.now().difference(launched) > _armWindow ||
-          !_settings.get(defs.launcherEnabled) ||
-          !_settings.get(defs.launcherAutoReturn)) {
+          (_launchReturnSeconds == null &&
+              (!_settings.get(defs.launcherEnabled) ||
+                  !_settings.get(defs.launcherAutoReturn)))) {
         return;
       }
-      final seconds = _settings.get(defs.launcherAutoReturnSeconds).toInt();
+      final seconds = _idleSeconds;
       log.info(name, 'auto-return armed: ${seconds}s idle');
       _startClock(seconds);
       unawaited(_watchTouches(true));
@@ -371,8 +379,14 @@ class AppLauncherManager extends Manager with WidgetsBindingObserver {
     } else if (returned) {
       _disarm();
       _launchedAt = null;
+      _launchReturnSeconds = null;
     }
   }
+
+  /// The idle time the clock runs for: the launch's own, or the setting.
+  int get _idleSeconds =>
+      _launchReturnSeconds ??
+      _settings.get(defs.launcherAutoReturnSeconds).toInt();
 
   /// (Re)start the idle clock. Armed once on pause, and again on every
   /// touch the watch reports, so the return only fires after [seconds]
@@ -432,6 +446,9 @@ class AppLauncherManager extends Manager with WidgetsBindingObserver {
   /// grant, so it is asked about first and holds even without
   /// Notification access.
   Future<_Hold?> _holdNow() async {
+    // A launch that named its own idle time (a doorbell ring) opened a live
+    // view that Android reads as a call: nobody is on it to wait for.
+    if (_launchReturnSeconds != null) return null;
     if (!_settings.get(defs.launcherAutoReturnMedia)) return null;
     if (await _inCall()) return _Hold.call;
     if (await SessionPlayer.anyPlaying()) return _Hold.media;
@@ -472,7 +489,7 @@ class AppLauncherManager extends Manager with WidgetsBindingObserver {
   /// channel callback; ignored while nothing is armed.
   void touchSeen() {
     if (_returnTimer == null) return;
-    final seconds = _settings.get(defs.launcherAutoReturnSeconds).toInt();
+    final seconds = _idleSeconds;
     log.debug(name, 'auto-return: touch in the other app, ${seconds}s again');
     _startClock(seconds);
   }
