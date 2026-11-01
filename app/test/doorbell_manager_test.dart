@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:kiosk_satellite/core/command_registry.dart';
@@ -96,6 +98,10 @@ void main() {
     await doorbell.init();
   }
 
+  tearDown(() {
+    messenger.setMockMethodCallHandler(channel, null);
+  });
+
   List<String> stubNames() => [for (final call in stubCalls) call.$1];
 
   Map<String, Object?> stubParams(String name) =>
@@ -115,7 +121,11 @@ void main() {
     await messenger.handlePlatformMessage(
       channel.name,
       const StandardMethodCodec().encodeMethodCall(MethodCall(method, args)),
-      (_) {},
+      (data) {
+        if (data != null) {
+          const StandardMethodCodec().decodeEnvelope(data);
+        }
+      },
     );
   }
 
@@ -131,7 +141,7 @@ void main() {
         'signatureId': signatureId,
       });
 
-  /// A notification the running capture caught.
+  /// The native side reports a caught notification (whether or not a capture runs).
   Future<void> reportCaptured() => fromNative('captured', const {
         'package': 'com.oufy',
         'channelId': 'channel 1',
@@ -223,6 +233,7 @@ void main() {
       });
       await ring();
       expect(stubCalls, isEmpty);
+      await pumpEventQueue();
       expect(haEvents, isEmpty);
     });
 
@@ -294,6 +305,7 @@ void main() {
       await build({'ks.doorbell.enabled': true});
       await ring(key: '');
       expect(stubCalls, isEmpty);
+      await pumpEventQueue();
       expect(haEvents, isEmpty);
     });
   });
@@ -364,7 +376,7 @@ void main() {
       expect(
         nativeCalls.firstWhere((call) => call.method == 'stopCapture')
             .arguments,
-        isEmpty,
+        equals(<String, Object?>{}),
       );
       expect(doorbell.capturing.value, isFalse);
     });
@@ -391,7 +403,7 @@ void main() {
       expect(
         nativeCalls.firstWhere((call) => call.method == 'stopCapture')
             .arguments,
-        isEmpty,
+        equals(<String, Object?>{}),
       );
       expect(doorbell.capturing.value, isFalse);
       expect(doorbell.captured.value, isNull);
@@ -551,11 +563,23 @@ void main() {
   });
 
   group('dispose', () {
-    test('a late native report does not throw', () async {
+    test('a start that fails after dispose does not throw', () async {
       await build({'ks.doorbell.enabled': true});
+      final lateStart = Completer<void>();
+      messenger.setMockMethodCallHandler(channel, (call) async {
+        if (call.method == 'startCapture') {
+          await lateStart.future;
+          throw PlatformException(code: 'late');
+        }
+        return null;
+      });
+      final pending = run('doorbellStartCapture');
+      await pumpEventQueue();
       await doorbell.dispose();
-      await reportCaptured();
-      await fromNative('captureEnded', {'reason': 'late'});
+      lateStart.complete();
+      final result = await pending;
+      expect(result.ok, isFalse);
+      expect(result.error, startsWith('could not start capture:'));
     });
 
     test('a late start does not throw', () async {
