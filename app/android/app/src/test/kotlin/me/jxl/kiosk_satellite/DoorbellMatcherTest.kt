@@ -111,4 +111,36 @@ class DoorbellMatcherTest {
             DoorbellMatcher.match(listOf(signature), "Com.Ocean.Battery.Cam", "com.ocean.battery.cam.Ring.raw.1"),
         )
     }
+
+    @Test fun matchSkipsANonMatchingSignatureAndReturnsALaterOne() {
+        val other = doorbell("other", "com.other.app", "com.ocean.battery.cam.ring")
+        val signature = doorbell("battery", "com.ocean.battery.cam", "com.ocean.battery.cam.ring")
+        assertSame(
+            signature,
+            DoorbellMatcher.match(listOf(other, signature), "com.ocean.battery.cam", "com.ocean.battery.cam.ring.raw.1"),
+        )
+    }
+
+    @Test fun channelPrefixOfOnlyStripsFromTheEnd() {
+        // An interior "raw" stays because the last segment "ring" does not match.
+        assertEquals(
+            "com.raw.ring",
+            DoorbellMatcher.channelPrefixOf("com.raw.ring"),
+        )
+        assertEquals(
+            "com.cafe.ring",
+            DoorbellMatcher.channelPrefixOf("com.cafe.ring.raw.1"),
+        )
+    }
+
+    @Test fun channelPrefixOfKeepsTheFirstSegmentWhenEverySegmentMatches() {
+        assertEquals("raw", DoorbellMatcher.channelPrefixOf("raw.1"))
+        assertEquals("dead", DoorbellMatcher.channelPrefixOf("dead.beef"))
+    }
+
+    @Test fun channelPrefixOfKeepsTrailingEmptySegments() {
+        // The empty last segment does not match, so nothing is stripped.
+        assertEquals("app.raw.", DoorbellMatcher.channelPrefixOf("app.raw."))
+        assertEquals("app.", DoorbellMatcher.channelPrefixOf("app..raw"))
+    }
 }
