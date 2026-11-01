@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:fake_async/fake_async.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter/widgets.dart' show AppLifecycleState;
@@ -369,6 +371,33 @@ void main() {
         async.elapse(const Duration(seconds: 74));
         expect(executed, isEmpty);
         async.elapse(const Duration(seconds: 2));
+        async.flushMicrotasks();
+        expect(executed, ['bringToFront']);
+      });
+    });
+
+    test('a second doorbell ring restarts the clock', () async {
+      fakeAsync((async) {
+        // The listener runs in the zone init() listened in: build inside
+        // the fake zone, or the clock the second ring starts is a real
+        // timer fake time can never fire.
+        unawaited(armed());
+        async.flushMicrotasks();
+        bus.publish(
+          const AppLaunched(package: 'com.a', returnAfterSeconds: 75),
+        );
+        async.flushMicrotasks();
+        launcher.didChangeAppLifecycleState(AppLifecycleState.paused);
+        async.flushMicrotasks();
+        async.elapse(const Duration(seconds: 70));
+        bus.publish(
+          const AppLaunched(package: 'com.a', returnAfterSeconds: 75),
+        );
+        async.flushMicrotasks();
+        // 70s past the second ring, short of its 75s: no return yet.
+        async.elapse(const Duration(seconds: 70));
+        expect(executed, isEmpty);
+        async.elapse(const Duration(seconds: 6));
         async.flushMicrotasks();
         expect(executed, ['bringToFront']);
       });
