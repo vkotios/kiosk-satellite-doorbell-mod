@@ -63,8 +63,8 @@ Future<void> showDoorbellDialog(
     }
   }
 
-  // The list from the manager: anything but a list of maps counts as
-  // empty, the same tolerant read the setting itself gets.
+  // The list from the manager; a failed read keeps the list on screen,
+  // and entries that are not maps are skipped.
   Future<void> reload(BuildContext dialogContext, StateSetter setState) async {
     final result = await runCommand(
       dialogContext,
@@ -73,10 +73,13 @@ Future<void> showDoorbellDialog(
       const {},
     );
     if (result == null || !dialogContext.mounted) return;
-    if (!result.ok) _toastFailure(dialogContext, result.error);
+    if (!result.ok) {
+      _toastFailure(dialogContext, result.error);
+      return;
+    }
     setState(() {
       signatures = result.ok && result.data is List
-          ? (result.data as List).cast<Map>()
+          ? (result.data as List).whereType<Map>().toList()
           : <Map>[];
     });
   }
@@ -94,7 +97,10 @@ Future<void> showDoorbellDialog(
       {'id': id},
     );
     if (result == null || !dialogContext.mounted) return;
-    if (!result.ok) _toastFailure(dialogContext, result.error);
+    if (!result.ok) {
+      _toastFailure(dialogContext, result.error);
+      return;
+    }
     await reload(dialogContext, setState);
   }
 
@@ -115,7 +121,10 @@ Future<void> showDoorbellDialog(
       },
     );
     if (result == null || !dialogContext.mounted) return;
-    if (!result.ok) _toastFailure(dialogContext, result.error);
+    if (!result.ok) {
+      _toastFailure(dialogContext, result.error);
+      return;
+    }
     await reload(dialogContext, setState);
   }
 
@@ -170,7 +179,10 @@ Future<void> showDoorbellDialog(
     );
     if (result == null) return;
     if (!dialogContext.mounted) return;
-    if (!result.ok) _toastFailure(dialogContext, result.error);
+    if (!result.ok) {
+      _toastFailure(dialogContext, result.error);
+      return;
+    }
     container.doorbell.captured.value = null;
     setState(() => started = false);
     await reload(dialogContext, setState);
@@ -335,7 +347,9 @@ Future<void> showDoorbellDialog(
                         ),
                       for (final signature in signatures)
                         ListTile(
-                          title: Text('${signature['label']}'),
+                          title: Text(
+                            '${signature['label'] ?? signature['id'] ?? ''}',
+                          ),
                           trailing: IconButton(
                             tooltip: 'Remove',
                             icon: const Icon(Icons.delete_outline),
