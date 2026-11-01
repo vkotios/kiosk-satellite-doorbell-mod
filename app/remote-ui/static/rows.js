@@ -716,6 +716,84 @@ export function settingRow(s) {
     return row;
   }
 
+  // The saved doorbells (doorbell.signatures), mirroring the device's row:
+  // a line per doorbell with its Remove button, the one-tap Eufy add while
+  // it is not saved yet, and the pointer to the tablet for any other one.
+  if (s.key === 'doorbell.signatures') {
+    const saved = () => {
+      const value = (state.settings || []).find((o) => o.key === s.key)?.value ?? s.value;
+      try {
+        const list = JSON.parse(value || '[]');
+        return Array.isArray(list)
+          ? list.filter((e) => e && typeof e === 'object' && typeof e.id === 'string' && e.id.trim())
+          : [];
+      } catch (_) { return []; }
+    };
+    const controls = document.createElement('div');
+    controls.style.cssText =
+      'display:flex; flex-direction:column; gap:8px; align-items:flex-end; min-width:0; max-width:60%; flex:0 1 auto';
+    let busy = false;
+    const setBusy = (on) => { busy = on; controls.querySelectorAll('button').forEach((b) => { b.disabled = on; }); };
+    const run = async (command, body) => {
+      if (busy) return;
+      setBusy(true);
+      try {
+        const res = await api(`/api/commands/${command}`, { method: 'POST', body: JSON.stringify(body) });
+        const out = await res.json().catch(() => null);
+        if (!res.ok || out?.ok !== true) {
+          throw new Error(out?.error || 'Could not update the doorbells. Try again.');
+        }
+        clearRowError(row);
+        try {
+          await loadSettings();
+        } catch (_) {
+          showRowError(row, 'Saved, but the list could not be reloaded. Reload the page.', null);
+        }
+      } catch (error) {
+        showRowError(row, error?.message || 'Could not update the doorbells. Try again.', null);
+        return;
+      } finally {
+        setBusy(false);
+      }
+    };
+    const paint = () => {
+      controls.textContent = '';
+      const list = saved();
+      for (const doorbell of list) {
+        const line = document.createElement('div');
+        line.style.cssText = 'display:flex; gap:10px; align-items:center';
+        const label = document.createElement('span');
+        label.className = 'device';
+        label.textContent = doorbell?.label || doorbell?.package || '';
+        const remove = document.createElement('button');
+        remove.className = 'btn-ghost';
+        remove.textContent = 'Remove';
+        remove.addEventListener('click', () => run('doorbellRemoveSignature', { id: doorbell?.id }));
+        line.append(label, remove);
+        controls.appendChild(line);
+      }
+      if (!list.some((d) => d?.package === 'com.oceanwing.battery.cam')) {
+        const add = document.createElement('button');
+        add.className = 'btn-ghost';
+        add.textContent = 'Add Eufy Security';
+        add.addEventListener('click', () => run('doorbellAddSignature', {
+          label: 'Eufy Security',
+          package: 'com.oceanwing.battery.cam',
+          channelPrefix: 'com.ocean.battery.cam.ring',
+        }));
+        controls.appendChild(add);
+      }
+      const hint = document.createElement('div');
+      hint.className = 'desc';
+      hint.textContent = "To add any other doorbell, use Settings > Doorbell on the tablet: it listens for your doorbell's notification.";
+      controls.appendChild(hint);
+    };
+    paint();
+    row.updateSetting = () => { paint(); return true; };
+    row.appendChild(controls);
+    return row;
+  }
+
   // The launcher's apps a locked kiosk offers (issue #1067), mirroring the
   // device's rows: a switch per launcher app, in the launcher's order.
   if (s.key === 'kiosk.allowed_apps') {

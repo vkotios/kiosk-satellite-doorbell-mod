@@ -10,7 +10,7 @@ import { localizeNavigation } from './localization.js';
 
 // The pages with nothing that works without a screen.
 const HIDDEN_TABS = new Set([
-  'screensaver', 'browser', 'camera', 'cameras', 'kiosk', 'lockdown', 'home', 'launcher',
+  'screensaver', 'browser', 'camera', 'cameras', 'kiosk', 'lockdown', 'home', 'launcher', 'doorbell',
   'calendar',
 ]);
 

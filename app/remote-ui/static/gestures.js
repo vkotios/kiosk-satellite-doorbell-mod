@@ -928,6 +928,7 @@ export const CATEGORY_TABS = [
   ['tab-kiosk', ['Kiosk']],
   ['tab-lockdown', ['Lockdown']],
   ['tab-launcher', ['Launcher']],
+  ['tab-doorbell', ['Doorbell']],
   ['tab-home', ['Home']],
   ['tab-screenaudio', ['Screen & Audio']],
   ['tab-screensaver', ['Screensaver']],
