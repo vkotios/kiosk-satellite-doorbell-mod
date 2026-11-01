@@ -53,14 +53,19 @@ void main() {
 
     test('drops entries missing id, package or channelPrefix', () {
       final decoded = decodeDoorbellSignatures(
-        '[{"package":"com.a","channelPrefix":"com.a.ring"},'
-        '{"id":"a","channelPrefix":"com.a.ring"},'
-        '{"id":"a","package":"com.a"},'
+        '[{"package":"com.b","channelPrefix":"com.b.ring"},'
+        '{"id":"c","channelPrefix":"com.c.ring"},'
+        '{"id":"d","package":"com.d"},'
         '"not a map",'
+        '{"id":"   ","package":"com.e","channelPrefix":"com.e.ring"},'
+        '{"id":"f","package":"   ","channelPrefix":"com.f.ring"},'
+        '{"id":"g","package":"com.g","channelPrefix":"   "},'
         '{"id":"a","package":"com.a","channelPrefix":"com.a.ring"}]',
       );
       expect(decoded, hasLength(1));
       expect(decoded.single.id, 'a');
+      expect(decoded.single.package, 'com.a');
+      expect(decoded.single.channelPrefix, 'com.a.ring');
     });
 
     test('returns an empty list for non-list JSON and invalid JSON', () {
