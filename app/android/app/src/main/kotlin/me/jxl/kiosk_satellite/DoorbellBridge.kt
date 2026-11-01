@@ -72,7 +72,7 @@ class DoorbellBridge(
             val bridge = instance ?: return false
             if (!bridge.isCaptureWindowOpen()) return false
             bridge.closeCapture()
-            bridge.main.post { bridge.onCaptured(pkg, channelId, title, appLabel) }
+            bridge.onCaptured(pkg, channelId, title, appLabel)
             return true
         }
     }
@@ -91,7 +91,7 @@ class DoorbellBridge(
     // every start and every end of a window, so a timeout left over from an
     // earlier window cannot end a later one.
     private var captureToken = 0
-    private var captureDeadline = 0L
+    private var captureOpen = false
 
     init {
         instance = this
@@ -167,7 +167,7 @@ class DoorbellBridge(
         val windowMs = (seconds?.toLong() ?: CAPTURE_DEFAULT_SECONDS)
             .coerceIn(CAPTURE_MIN_SECONDS, CAPTURE_MAX_SECONDS) * 1000
         captureToken++
-        captureDeadline = SystemClock.uptimeMillis() + windowMs
+        captureOpen = true
         val token = captureToken
         main.postDelayed({
             if (captureToken == token) {
@@ -206,11 +206,13 @@ class DoorbellBridge(
     /** Main thread only. Close the window; the caller reports the reason. */
     private fun closeCapture() {
         captureToken++
-        captureDeadline = 0L
+        captureOpen = false
     }
 
-    /** Main thread only. False once the window's deadline has passed. */
-    private fun isCaptureWindowOpen(): Boolean = SystemClock.uptimeMillis() < captureDeadline
+    /** Main thread only. True from startCapture until the window is closed
+     *  by its timeout, by stopCapture or by the notification it caught. The
+     *  flag is the one truth, so no clock can disagree with the token. */
+    private fun isCaptureWindowOpen(): Boolean = captureOpen
 
     /** Send the held tap action. False when there is none, or Android
      *  refuses it. */
