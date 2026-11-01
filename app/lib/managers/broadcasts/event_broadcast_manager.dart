@@ -33,6 +33,8 @@ typedef EventBroadcastSender =
 ///   satellite state in between.
 /// * VS_TIMER_*, ALARM_* mirror the timer and alarm events Home Assistant
 ///   gets, with the same fields as extras.
+/// * DOORBELL_RINGING mirrors the doorbell ring Home Assistant gets, with
+///   the doorbell, label and opened fields as extras.
 /// * INTERCOM_* follow the call state. INTERCOM_ENDED fires once when a
 ///   call, broadcast or ring stops holding the kiosk.
 /// * SCREENSAVER_STARTED and SCREENSAVER_STOPPED follow the screensaver.
@@ -82,6 +84,8 @@ class EventBroadcastManager extends Manager {
         _mirror('VS_TIMER_', data);
       case HaEventRequested(name: 'kiosk_satellite_alarm', :final data):
         _mirror('ALARM_', data);
+      case HaEventRequested(name: 'kiosk_satellite_doorbell', :final data):
+        _mirror('DOORBELL_', data);
       case IntercomStateChanged(:final status):
         _onIntercom(status);
       case ScreensaverStateChanged(:final active):
