@@ -6,7 +6,8 @@ import 'dart:math' show Random;
 import 'dart:typed_data';
 
 import 'package:crypto/crypto.dart' show md5;
-import 'package:flutter/foundation.dart' show ValueNotifier;
+import 'package:flutter/foundation.dart'
+    show ValueNotifier, visibleForTesting;
 import 'package:flutter/services.dart'
     show AssetBundle, AssetManifest, rootBundle;
 import 'package:shelf/shelf.dart';
@@ -1057,8 +1058,19 @@ class RemoteManager extends Manager {
   }
 
   /// Commands that only the kiosk's own screen may run: answering an
-  /// intercom call is a confirmation the remote admin must not give.
-  static const _deviceOnly = {'intercomAnswer', 'intercomDecline'};
+  /// intercom call is a confirmation the remote admin must not give, and
+  /// the doorbell capture reads other apps' notifications, so only the
+  /// kiosk's own screen may start it.
+  static const _deviceOnly = {
+    'intercomAnswer',
+    'intercomDecline',
+    'doorbellStartCapture',
+    'doorbellStopCapture',
+  };
+
+  /// [_deviceOnly] as the test can reach it.
+  @visibleForTesting
+  static const deviceOnlyCommands = _deviceOnly;
 
   /// What a fleet token opens: the follower's side of the fleet wire and
   /// the update commands the leader drives.
