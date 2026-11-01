@@ -33,6 +33,7 @@ import '../managers/screensaver/screensaver_manager.dart'
 import '../managers/screensaver/screensaver_widgets.dart';
 import '../managers/device/wifi_mac.dart'
     show WifiMacIdentity, WifiMacSource, wifiMacIdentity;
+import '../managers/doorbell/doorbell_signature.dart';
 import '../managers/kiosk/drawer_items.dart';
 import '../managers/settings/definitions.dart';
 import '../managers/person/person_sensor_manager.dart' show LogAccess;
@@ -52,6 +53,7 @@ import 'color_picker.dart';
 import 'celestial_settings.dart';
 import 'weather_mood_settings.dart';
 import 'date_picker.dart';
+import 'doorbell_dialog.dart';
 import 'gesture_settings.dart';
 import 'entity_picker.dart';
 import 'glance_rows.dart';
@@ -316,6 +318,12 @@ const _categories = <(String, String, Object, String)>[
     'App Launcher',
     Icons.apps_outlined,
     'Open other apps from the kiosk',
+  ),
+  (
+    'Doorbell',
+    'Doorbell',
+    Icons.notifications_active_outlined,
+    'Open a doorbell app on a ring',
   ),
   ('Gestures', 'Gestures', Icons.gesture, 'Touch, palm and clap gestures'),
   (
@@ -2698,6 +2706,18 @@ class _CategoryContentState extends State<_CategoryContent> {
             id: 'x:launcher_permissions',
             child: SettingsCard(
               children: [_LauncherPermissionsTile(container: container)],
+            ),
+          ),
+        ],
+        // The Doorbell page's one grant, only while the setting is on:
+        // Android shows a ring to no one without it.
+        if (widget.category == 'Doorbell' &&
+            container.settings.get(doorbellEnabled)) ...[
+          SectionHeading('Required system permissions'),
+          SearchLandingTarget(
+            id: 'x:doorbell_permissions',
+            child: SettingsCard(
+              children: [_DoorbellPermissionsTile(container: container)],
             ),
           ),
         ],
@@ -5117,6 +5137,87 @@ class _MediaSessionPermissionsTileState
                 await _refresh();
               },
               child: Text(mediaText(context, 'Grant')),
+            ),
+    );
+  }
+}
+
+/// The Doorbell page's Required system permissions group: the
+/// Notification access grant, in the Media Session tile's shape.
+class _DoorbellPermissionsTile extends StatefulWidget {
+  const _DoorbellPermissionsTile({required this.container});
+
+  final AppContainer container;
+
+  @override
+  State<_DoorbellPermissionsTile> createState() =>
+      _DoorbellPermissionsTileState();
+}
+
+class _DoorbellPermissionsTileState extends State<_DoorbellPermissionsTile>
+    with WidgetsBindingObserver {
+  bool? _granted;
+
+  @override
+  void initState() {
+    super.initState();
+    WidgetsBinding.instance.addObserver(this);
+    _refresh();
+  }
+
+  @override
+  void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
+    super.dispose();
+  }
+
+  final _returned = ReturnWatch();
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    // The grant is given on an OS screen that reports nothing back.
+    if (_returned.returned(state)) _refresh();
+  }
+
+  Future<void> _refresh() async {
+    final granted = await SessionPlayer.hasAccess();
+    if (!mounted) return;
+    setState(() => _granted = granted);
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final granted = _granted;
+    return SettingsRow(
+      leading: Icon(
+        granted == true
+            ? Icons.check_circle_outline
+            : Icons.notifications_off_outlined,
+        color: granted == true ? null : theme.colorScheme.error,
+      ),
+      title: const Text('Notification access'),
+      subtitle: Text(
+        granted == true
+            ? 'Kiosk Satellite sees a ring from the doorbell apps you '
+                'saved. It reads notifications from those apps only, and '
+                'for a short time while you capture a new doorbell.'
+            : 'Without this Android never shows Kiosk Satellite a ring, '
+                'so no doorbell can open.',
+      ),
+      trailing: granted == true
+          ? null
+          : TextButton(
+              onPressed: () async {
+                await widget.container.commands.execute(
+                  'requestOsPermissions',
+                  {
+                    'which': ['notificationAccess'],
+                  },
+                );
+                await _refresh();
+              },
+              child: const Text('Grant'),
             ),
     );
   }
@@ -11513,6 +11614,24 @@ class SettingTile extends StatelessWidget {
             ),
             trailing: const Icon(Icons.edit_outlined),
             onTap: () => _pickLauncherApps(context),
+          );
+        }
+        // The saved doorbells: listed and changed in the doorbell
+        // dialog, never typed as JSON.
+        if (def.key == doorbellSignatures.key) {
+          final saved = decodeDoorbellSignatures(value as String);
+          return ListTile(
+            title: Text(def.localizedTitle(context)),
+            subtitle: Text(
+              saved.isEmpty
+                  ? 'None yet. Add Eufy Security or capture your doorbell.'
+                  : saved.map((doorbell) => doorbell.label).join(', '),
+            ),
+            trailing: const Icon(Icons.edit_outlined),
+            onTap: () async {
+              await showDoorbellDialog(context, c);
+              onChanged();
+            },
           );
         }
         // The launcher's apps a locked kiosk offers (issue #1067): a switch
