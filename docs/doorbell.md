@@ -8,7 +8,7 @@ The page lives under **Settings, Doorbell**.
 
 | Setting | What it does |
 | --- | --- |
-| Open the doorbell app on a ring | The master switch, off by default. While it is off, rings are ignored and no notification is read. |
+| Open the doorbell app on a ring | The master switch, off by default. While it is off, rings are ignored and no notification title is read. |
 | Return after a ring (seconds) | The time without a touch before the kiosk comes back, 75 by default and at least 10. |
 | Doorbells | The saved doorbells. The row opens a dialog that lists them, each with a remove button, next to an **Add Eufy Security** button and a **Capture a doorbell** button. |
 
@@ -34,9 +34,11 @@ The return works through the App Launcher's return, which needs the **Display ov
 
 The same ring seen twice within 20 seconds is opened once.
 
+A ring that arrives before Kiosk Satellite has started is dropped, and nothing is logged for it. While Lockdown Mode holds, a ring opens nothing: Home Assistant still gets the event, with opened set to false.
+
 ## Home Assistant and Android
 
-A ring also fires the `esphome.kiosk_satellite_doorbell` event on the Home Assistant bus and sends the `DOORBELL_RINGING` Android broadcast, whether the tap action opened or not. The fields are the same on both:
+A ring also fires the `esphome.kiosk_satellite_doorbell` event on the Home Assistant bus and sends the `DOORBELL_RINGING` Android broadcast, whether the tap action opened or not. The Home Assistant event goes out over the ESPHome connection, so turn on Settings > ESPHome first, as for the other [Home Assistant Events](events.md). The fields are the same on both:
 
 | Field | What it holds |
 | --- | --- |
@@ -60,6 +62,10 @@ actions:
       entity_id: light.porch
 ```
 
+## Remote Admin
+
+The Doorbell tab of the Remote Admin UI turns the feature on, sets the return time and lists, adds (the Eufy Security preset) and removes saved doorbells. Capturing a new doorbell needs the kiosk's own screen, and the Remote Admin UI and the API refuse to start it.
+
 ## Privacy
 
 Kiosk Satellite looks at the app and channel of each notification to see whether it belongs to a saved doorbell. It reads a notification's title only when it does, or while a capture waits. Every other notification is dropped without its content being read, stored or reported. With the switch off no doorbell is matched, so no title is read.
@@ -72,3 +78,4 @@ What is kept is what you saved: the name, the app's package and the channel pref
 - The switch is off. Rings are ignored while it is.
 - The ring arrived on a channel the saved doorbell does not match. Capture the doorbell again.
 - The ring notification has no tap action, so there is nothing to open.
+- The kiosk was behind another app: the return only comes when the kiosk itself was in front when the ring opened the doorbell app.
