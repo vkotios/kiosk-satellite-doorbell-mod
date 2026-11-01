@@ -1486,20 +1486,16 @@ const launcherMenu = SettingDef<bool>(
 // app announces the ring, the kiosk fires that notification's own tap
 // action, which opens the camera that rang, and the launcher's auto-return
 // brings the kiosk back. Needs the Notification access grant, the same as
-// the media session source. Hidden until it has its own page and
-// translations: set it through the remote API for now.
-// TEMP (tablet stage): defaults on, since a hidden setting has no switch
-// to reach it. The PR build defaults it off.
+// the media session source.
 const doorbellEnabled = SettingDef<bool>(
   key: 'doorbell.enabled',
   type: SettingType.boolean,
-  defaultValue: true,
+  defaultValue: false,
   title: 'Open the doorbell app on a ring',
   description:
-      'When the Eufy Security app announces a ring, open that '
-      "doorbell's live view over the kiosk. Needs Notification access.",
-  category: 'Launcher',
-  hidden: true,
+      'When a doorbell app announces a ring, open its live view over the '
+      'kiosk. Needs Notification access.',
+  category: 'Doorbell',
 );
 
 const doorbellReturnSeconds = SettingDef<num>(
@@ -1511,9 +1507,21 @@ const doorbellReturnSeconds = SettingDef<num>(
   description:
       'Time without a touch in the doorbell app before the kiosk comes '
       'back.',
-  category: 'Launcher',
+  category: 'Doorbell',
   dependsOn: 'doorbell.enabled',
-  hidden: true,
+);
+
+// The doorbell apps as a JSON list of {id, label, package, channelPrefix}
+// (see doorbell_signature.dart): a string holding a JSON list, like
+// launcher.apps, decoded tolerantly on read.
+const doorbellSignatures = SettingDef<String>(
+  key: 'doorbell.signatures',
+  type: SettingType.string,
+  defaultValue: '[]',
+  title: 'Doorbells',
+  description: 'The doorbell apps that open on a ring.',
+  category: 'Doorbell',
+  dependsOn: 'doorbell.enabled',
 );
 
 // ── Home Launcher ──────────────────────────────────────────────────────
@@ -11906,6 +11914,7 @@ const fleetSyncCategories = <(String, String, String)>[
   ('Lockdown', 'Lockdown Mode', ''),
   ('Home', 'Home Launcher', ''),
   ('Launcher', 'App Launcher', ''),
+  ('Doorbell', 'Doorbell', ''),
   ('Gestures', 'Gestures', ''),
   ('Intercom', 'Intercom', 'the key, unless synced as a credential'),
   ('Alarms', 'Alarms', 'the alarms themselves'),
@@ -13243,6 +13252,7 @@ const List<SettingDef<Object>> allSettings = [
   launcherMenu,
   doorbellEnabled,
   doorbellReturnSeconds,
+  doorbellSignatures,
   // The Screen & Audio page: screen first, then the volume mixer, then the
   // hand-built device pickers, then capture tuning. Both UIs render this
   // category in this order.

@@ -37,6 +37,7 @@ class HeadlessSettings {
     'Lockdown',
     'Home',
     'Launcher',
+    'Doorbell',
     'Calendar',
   };
 
@@ -114,6 +115,7 @@ class HeadlessSettings {
     defs.kioskEnabled: false,
     defs.lockdownEnabled: false,
     defs.launcherEnabled: false,
+    defs.doorbellEnabled: false,
     defs.homeLauncherEnabled: false,
     defs.cameraEnabled: false,
     defs.cameraRtspEnabled: false,
