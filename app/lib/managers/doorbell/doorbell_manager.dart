@@ -29,16 +29,17 @@ class DoorbellCapture {
   final String appLabel;
 }
 
-/// A doorbell that rings in another app (the Eufy Security app today).
+/// The doorbell feature: the saved doorbells and the rings it answers.
 ///
-/// The native listener (MediaSessionListener, through DoorbellBridge)
-/// recognises the app's ring notification and reports it here. When the
-/// setting is on, the ring is answered by firing that notification's own
-/// tap action, which is what opens the camera that rang: each doorbell's
-/// notification carries its own. The launch goes through KioskManager's
-/// openNotificationAction, the same steps every other launch over the kiosk
-/// takes, with the doorbell's own idle time so the launcher's auto-return
-/// brings the kiosk back.
+/// The manager keeps the list of saved doorbells (signatures) and pushes
+/// it to the native listener, which recognises a ring notification from
+/// one of them and reports it here. A ring is answered by opening the
+/// notification's own tap action through openNotificationAction, with the
+/// doorbell's own return time, and the Home Assistant event
+/// kiosk_satellite_doorbell is published after it. The manager also runs
+/// the capture the signature picker uses: the capturing and captured
+/// notifiers and the start and stop commands. Commands list, add and
+/// remove the saved doorbells.
 class DoorbellManager extends Manager {
   DoorbellManager(super.bus, super.commands, super.log, this._settings);
 
@@ -49,6 +50,10 @@ class DoorbellManager extends Manager {
 
   /// The notification the running capture caught, null until one does.
   final captured = ValueNotifier<DoorbellCapture?>(null);
+
+  /// True from the start of [dispose]: the notifiers are closed there, so
+  /// nothing may be assigned to them afterwards.
+  bool _disposed = false;
 
   StreamSubscription<SettingChanged>? _settingSub;
 
@@ -68,13 +73,14 @@ class DoorbellManager extends Manager {
           if (!_settings.get(defs.doorbellEnabled)) {
             return const CommandResult.fail('the doorbell setting is off');
           }
-          captured.value = null;
+          _setCaptured(null);
+          _setCapturing(true);
           try {
             await _channel.invokeMethod('startCapture', {'seconds': 60});
           } catch (e) {
+            _setCapturing(false);
             return CommandResult.fail('could not start capture: $e');
           }
-          capturing.value = true;
           return const CommandResult.ok();
         },
       ),
@@ -85,8 +91,7 @@ class DoorbellManager extends Manager {
         name: 'doorbellStopCapture',
         description: 'Stop the running doorbell notification capture.',
         handler: (_) async {
-          await _channel.invokeMethod('stopCapture');
-          capturing.value = false;
+          await _stopCapture();
           return const CommandResult.ok();
         },
       ),
@@ -172,27 +177,60 @@ class DoorbellManager extends Manager {
             signatureId: '${args['signatureId'] ?? ''}',
           );
         } else if (call.method == 'captured') {
-          captured.value = DoorbellCapture(
-            package: '${args['package'] ?? ''}',
-            channelId: '${args['channelId'] ?? ''}',
-            channelPrefix: '${args['channelPrefix'] ?? ''}',
-            title: '${args['title'] ?? ''}',
-            appLabel: '${args['appLabel'] ?? ''}',
+          _setCaptured(
+            DoorbellCapture(
+              package: '${args['package'] ?? ''}',
+              channelId: '${args['channelId'] ?? ''}',
+              channelPrefix: '${args['channelPrefix'] ?? ''}',
+              title: '${args['title'] ?? ''}',
+              appLabel: '${args['appLabel'] ?? ''}',
+            ),
           );
         } else if (call.method == 'captureEnded') {
           log.info(name, "capture ended: ${args['reason'] ?? ''}");
-          capturing.value = false;
+          _setCapturing(false);
         }
       }
       return null;
     });
-    await _pushConfiguration();
     _settingSub = bus.on<SettingChanged>().listen((e) {
       if (e.key == defs.doorbellEnabled.key ||
           e.key == defs.doorbellSignatures.key) {
+        // Turning the setting off ends a running capture.
+        if (e.key == defs.doorbellEnabled.key &&
+            e.value != true &&
+            capturing.value) {
+          unawaited(_stopCapture());
+          _setCaptured(null);
+        }
         unawaited(_pushConfiguration());
       }
     });
+    await _pushConfiguration();
+  }
+
+  /// Assign [capturing] unless [dispose] has already closed the notifier.
+  void _setCapturing(bool value) {
+    if (_disposed) return;
+    capturing.value = value;
+  }
+
+  /// Assign [captured] unless [dispose] has already closed the notifier.
+  void _setCaptured(DoorbellCapture? value) {
+    if (_disposed) return;
+    captured.value = value;
+  }
+
+  /// Stop a running capture: tell the native side and clear the flag
+  /// whether or not that worked, since the capture is over either way.
+  /// The stop command and the setting-off listener both come here.
+  Future<void> _stopCapture() async {
+    try {
+      await _channel.invokeMethod('stopCapture', <String, Object?>{});
+    } catch (e) {
+      log.warn(name, 'could not stop the doorbell capture: $e');
+    }
+    _setCapturing(false);
   }
 
   /// Tell the native listener which doorbells to answer: the saved
@@ -212,12 +250,17 @@ class DoorbellManager extends Manager {
       log.warn(name, 'could not push the doorbell configuration');
     } on PlatformException catch (e) {
       log.warn(name, 'could not push the doorbell configuration: $e');
+    } catch (e) {
+      log.warn(name, 'could not push the doorbell configuration: $e');
     }
   }
 
   /// The saved doorbell signatures, decoded fresh so changes apply live.
-  List<DoorbellSignature> get _signatures =>
-      decodeDoorbellSignatures(_settings.get(defs.doorbellSignatures));
+  /// A growable copy: the decoder returns an unmodifiable list when the
+  /// setting holds garbage, and the add and remove commands mutate it.
+  List<DoorbellSignature> get _signatures => List<DoorbellSignature>.of(
+    decodeDoorbellSignatures(_settings.get(defs.doorbellSignatures)),
+  );
 
   /// The id a new signature gets: the label lowercased with every run of
   /// characters outside a-z0-9 collapsed into one '-', 'doorbell' when
@@ -283,6 +326,7 @@ class DoorbellManager extends Manager {
 
   @override
   Future<void> dispose() async {
+    _disposed = true;
     await _settingSub?.cancel();
     _channel.setMethodCallHandler(null);
     capturing.dispose();
