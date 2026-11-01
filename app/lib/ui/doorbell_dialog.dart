@@ -5,6 +5,7 @@ import 'package:flutter/material.dart';
 import '../app_container.dart';
 import '../core/command_registry.dart';
 import '../managers/doorbell/doorbell_signature.dart';
+import '../managers/doorbell/doorbell_manager.dart' show DoorbellCapture;
 import '../managers/settings/definitions.dart' show doorbellEnabled;
 import 'toast.dart';
 
@@ -25,6 +26,9 @@ Future<void> showDoorbellDialog(
   // commands are disabled, so a double tap cannot add a doorbell twice.
   var busy = false;
 
+  // The command in flight now, so the close can wait for it.
+  Future<CommandResult>? running;
+
   // A capture was started in this dialog: it tells a capture that
   // timed out from one that never started here.
   var started = false;
@@ -32,9 +36,8 @@ Future<void> showDoorbellDialog(
   // The name the caught notification is saved under.
   final nameController = TextEditingController();
 
-  // Whether the caught screen has filled the name field for the
-  // notification it is showing.
-  var named = false;
+  // The caught notification the name field was filled from.
+  DoorbellCapture? namedFor;
 
   // Every command the dialog runs goes through here, one at a time.
   // It returns null when a command already runs. The context and
@@ -53,9 +56,13 @@ Future<void> showDoorbellDialog(
     if (dialogContext != null && dialogContext.mounted) {
       setState?.call(() {});
     }
+    Future<CommandResult>? future;
     try {
-      return await container.commands.execute(name, params);
+      future = container.commands.execute(name, params);
+      running = future;
+      return await future;
     } finally {
+      if (identical(running, future)) running = null;
       busy = false;
       if (dialogContext != null && dialogContext.mounted) {
         setState?.call(() {});
@@ -225,12 +232,12 @@ Future<void> showDoorbellDialog(
                   color: Theme.of(context).colorScheme.onSurfaceVariant,
                 );
                 // The caught screen fills the name once per
-                // notification, not on every rebuild.
-                if (caught != null && !named) {
-                  named = true;
+                // caught notification.
+                if (caught != null && !identical(namedFor, caught)) {
+                  namedFor = caught;
                   nameController.text = caught.appLabel;
                 }
-                if (caught == null) named = false;
+                if (caught == null) namedFor = null;
                 return ListView(
                   shrinkWrap: true,
                   children: [
@@ -401,16 +408,24 @@ Future<void> showDoorbellDialog(
       },
     ),
   );
-  // However the dialog closed, a capture that still runs ends here,
-  // and whatever it caught is forgotten. The buttons are gone, so
-  // the one-at-a-time guard no longer applies and cannot be left
-  // holding the stop back.
+  // The dialog is closing but still on screen, so the name
+  // controller is left to the garbage collector: it holds no
+  // resource, and disposing it under a mounted TextField is an
+  // error. Whatever a running capture caught is forgotten and
+  // the capture ends. A command still in flight is awaited
+  // first, so it finishes (and its setting is saved) before the
+  // settings page rebuilds its Doorbells row.
+  final pending = running;
+  if (pending != null) {
+    try {
+      await pending;
+    } catch (_) {}
+  }
   busy = false;
   if (container.doorbell.capturing.value) {
     await runCommand(null, null, 'doorbellStopCapture', const {});
   }
   container.doorbell.captured.value = null;
-  nameController.dispose();
 }
 
 /// A doorbell command that did not go through, told the way the
