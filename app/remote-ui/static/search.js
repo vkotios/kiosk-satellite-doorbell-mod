@@ -13,7 +13,7 @@ import { REALTIME_PROVIDERS, providerKeys } from './vs_native.js';
 // not cover. Keep SEARCH_EXTRAS in step with handBuiltSearchEntries there.
 export const SEARCH_CATEGORY_TABS = {
   'Browser': 'browser', 'Kiosk': 'kiosk', 'Lockdown': 'lockdown',
-  'Launcher': 'launcher', 'Home': 'home', 'Screen & Audio': 'screenaudio',
+  'Launcher': 'launcher', 'Doorbell': 'doorbell', 'Home': 'home', 'Screen & Audio': 'screenaudio',
   'Screensaver': 'screensaver', 'Camera': 'camera',
   'Home Assistant': 'homeassistant', 'Voice Satellite': 'voicesatellite',
   'Sendspin': 'sendspin', 'DLNA': 'dlna', 'Intercom': 'intercom', 'Alarms': 'alarms', 'Calendar': 'calendar',
