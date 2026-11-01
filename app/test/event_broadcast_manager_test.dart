@@ -157,6 +157,23 @@ void main() {
     expect(sent[1].$2.containsKey('event_type'), isFalse);
   });
 
+  test('a doorbell ring goes out with its fields as extras', () async {
+    final names = await publish([
+      const HaEventRequested('kiosk_satellite_doorbell', {
+        'event_type': 'ringing',
+        'doorbell': 'Front Door',
+        'label': 'Eufy Security',
+        'opened': true,
+      }),
+    ]);
+    expect(names, ['DOORBELL_RINGING']);
+    expect(sent[0].$2, {
+      'doorbell': 'Front Door',
+      'label': 'Eufy Security',
+      'opened': true,
+    });
+  });
+
   Map<String, Object?> intercom(String state, [String peer = '']) => {
     'state': state,
     if (peer.isNotEmpty)
