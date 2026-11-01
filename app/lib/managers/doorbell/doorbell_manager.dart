@@ -297,6 +297,29 @@ class DoorbellManager extends Manager {
       log.info(name, "ring '$title' ignored: the doorbell setting is off");
       return;
     }
+
+    // Tell Home Assistant a doorbell rang, naming the saved signature the
+    // ring came from when there is one, so an automation can say which.
+    void publish(bool opened) {
+      var label = title;
+      for (final signature in decodeDoorbellSignatures(
+        _settings.get(defs.doorbellSignatures),
+      )) {
+        if (signature.id == signatureId) label = signature.label;
+      }
+      bus.publish(HaEventRequested('kiosk_satellite_doorbell', {
+        'event_type': 'ringing',
+        'doorbell': title,
+        'label': label,
+        'opened': opened,
+      }));
+    }
+
+    if (_settings.get(defs.lockdownEnabled)) {
+      log.info(name, "ring '$title' not opened: lockdown holds");
+      publish(false);
+      return;
+    }
     final seconds = _settings.get(defs.doorbellReturnSeconds).toInt();
     log.info(name, "ring '$title': opening it, back after ${seconds}s idle");
     // A dark panel or a screensaver would hide the camera it opens.
@@ -308,20 +331,7 @@ class DoorbellManager extends Manager {
       'returnAfterSeconds': seconds,
     });
     if (!result.ok) log.warn(name, "ring '$title' not opened: ${result.error}");
-    // Tell Home Assistant a doorbell rang, naming the saved signature the
-    // ring came from when there is one, so an automation can say which.
-    var label = title;
-    for (final signature in decodeDoorbellSignatures(
-      _settings.get(defs.doorbellSignatures),
-    )) {
-      if (signature.id == signatureId) label = signature.label;
-    }
-    bus.publish(HaEventRequested('kiosk_satellite_doorbell', {
-      'event_type': 'ringing',
-      'doorbell': title,
-      'label': label,
-      'opened': result.ok,
-    }));
+    publish(result.ok);
   }
 
   @override

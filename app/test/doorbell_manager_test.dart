@@ -237,6 +237,25 @@ void main() {
       expect(haEvents, isEmpty);
     });
 
+    test('under lockdown opens nothing and tells Home Assistant it did '
+        'not open', () async {
+      await build({
+        'ks.doorbell.enabled': true,
+        'ks.lockdown.enabled': true,
+      });
+      await ring(title: 'Front door');
+      expect(stubCalls, isEmpty);
+      await pumpEventQueue();
+      expect(haEvents, hasLength(1));
+      expect(haEvents.single.name, 'kiosk_satellite_doorbell');
+      expect(haEvents.single.data, {
+        'event_type': 'ringing',
+        'doorbell': 'Front door',
+        'label': 'Front door',
+        'opened': false,
+      });
+    });
+
     test('wakes the screen, then opens the notification', () async {
       await build({
         'ks.doorbell.enabled': true,

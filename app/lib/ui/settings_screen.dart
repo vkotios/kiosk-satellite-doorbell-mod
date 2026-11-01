@@ -10055,16 +10055,20 @@ class _DevicePermissionsTileState extends State<_DevicePermissionsTile>
           onGrant: () => _requestVia('usageAccess'),
         ),
         // The Local Media Session player reads other apps' sessions
-        // through it, so it counts as missing only while it is picked.
+        // through it, so it counts as missing only while it is picked;
+        // the Doorbell reads rings through it too.
         _row(
           granted: perms?.notificationAccess,
-          needed: _localSessionPicked(widget.container),
+          needed:
+              _localSessionPicked(widget.container) ||
+              settings.get(doorbellEnabled),
           missingIcon: Icons.notifications_off_outlined,
           title: devicePermissionDescriptions['notificationAccess']!.title,
           held: devicePermissionDescriptions['notificationAccess']!.description,
           missing:
-              'Without this Android lists no media sessions, so Now '
-              'Playing cannot follow the apps playing on this device.',
+              'Without this Android lists no media sessions and the '
+              'Doorbell sees no rings, so Now Playing cannot follow the '
+              'apps playing on this device and a ring never opens its app.',
           idle: 'Lets Now Playing follow the apps playing on this device.',
           onGrant: () => _requestVia('notificationAccess'),
         ),
