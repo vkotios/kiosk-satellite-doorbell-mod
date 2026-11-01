@@ -581,6 +581,12 @@ const List<SettingsSearchEntry> handBuiltSearchEntries = [
     anchorId: 'x:launcher_permissions',
   ),
   SettingsSearchEntry(
+    category: 'Doorbell',
+    title: 'Required system permissions',
+    description: 'The notification access the doorbell needs to see a ring.',
+    anchorId: 'x:doorbell_permissions',
+  ),
+  SettingsSearchEntry(
     category: 'Home',
     title: 'Home screen status',
     description:
