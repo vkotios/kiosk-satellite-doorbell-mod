@@ -39,6 +39,9 @@ void main() {
   Object? nativeError;
   late bool openFails;
 
+  /// Whether the mocked native click service reports itself running.
+  late bool clickServiceRunning;
+
   const eufy = {
     'id': 'eufy',
     'label': 'Eufy Security',
@@ -65,10 +68,20 @@ void main() {
     haEvents = [];
     nativeError = error;
     openFails = openNotificationFails;
+    clickServiceRunning = true;
     messenger.setMockMethodCallHandler(channel, (call) async {
       nativeCalls.add(call);
       final thrown = nativeError;
       if (thrown != null) throw thrown;
+      switch (call.method) {
+        case 'clickServiceRunning':
+          return clickServiceRunning;
+        case 'openClickSettings':
+        case 'configureClick':
+        case 'startClickCapture':
+        case 'stopClickCapture':
+          return true;
+      }
       return null;
     });
     commands.register(
@@ -93,6 +106,16 @@ void main() {
         },
       ),
     );
+    commands.register(
+      Command(
+        name: 'bringToFront',
+        description: 'stub',
+        handler: (params) async {
+          stubCalls.add(('bringToFront', params));
+          return const CommandResult.ok();
+        },
+      ),
+    );
     bus.on<HaEventRequested>().listen(haEvents.add);
     doorbell = DoorbellManager(bus, commands, log, settings);
     await doorbell.init();
@@ -111,6 +134,12 @@ void main() {
   List<Object?> configurePushes() => [
         for (final call in nativeCalls)
           if (call.method == 'configure') call.arguments,
+      ];
+
+  /// The arguments of every 'configureClick' push, in order.
+  List<Object?> configureClickPushes() => [
+        for (final call in nativeCalls)
+          if (call.method == 'configureClick') call.arguments,
       ];
 
   Future<CommandResult> run(String name, [Map<String, Object?>? params]) =>
@@ -223,10 +252,69 @@ void main() {
       );
       expect(configurePushes(), hasLength(1));
     });
+
+    test('configure carries only the doorbells a notification rings',
+        () async {
+      await build({
+        'ks.doorbell.enabled': true,
+        'ks.doorbell.signatures':
+            '[{"id":"eufy","label":"Eufy","package":"com.eufy",'
+            '"channelPrefix":"pre"},'
+            '{"id":"ha","label":"HA","package":"com.ha",'
+            '"entity":"binary_sensor.door","clickLabel":"Front door"}]',
+      });
+      expect(configurePushes().single, {
+        'signatures': [
+          {
+            'id': 'eufy',
+            'label': 'Eufy',
+            'package': 'com.eufy',
+            'channelPrefix': 'pre',
+          },
+        ],
+      });
+    });
+
+    test('configureClick carries the distinct click and entity packages',
+        () async {
+      await build({
+        'ks.doorbell.enabled': true,
+        'ks.doorbell.signatures':
+            '[{"id":"a","label":"A","package":"com.one","channelPrefix":"pre"},'
+            '{"id":"b","label":"B","package":"com.two",'
+            '"entity":"binary_sensor.b","clickLabel":"B"},'
+            '{"id":"c","label":"C","package":"com.two","channelPrefix":"pre2",'
+            '"open":"click","clickLabel":"C"}]',
+      });
+      expect(configureClickPushes().single, {
+        'packages': ['com.two'],
+      });
+    });
+
+    test('configureClick is empty while the setting is off', () async {
+      await build({
+        'ks.doorbell.enabled': false,
+        'ks.doorbell.signatures':
+            '[{"id":"b","label":"B","package":"com.two",'
+            '"entity":"binary_sensor.b","clickLabel":"B"}]',
+      });
+      expect(configureClickPushes().single, {
+        'packages': [],
+      });
+    });
   });
 
-  group('a ring', () {
-    test('is ignored while the setting is off', () async {
+  group('the click delay setting', () {
+    test('exists with its default and category', () {
+      expect(defs.doorbellClickDelaySeconds.key,
+          'doorbell.click_delay_seconds');
+      expect(defs.doorbellClickDelaySeconds.defaultValue, 8);
+      expect(defs.doorbellClickDelaySeconds.category, 'Doorbell');
+      expect(defs.allSettings, contains(defs.doorbellClickDelaySeconds));
+    });
+  });
+
+  group('a ring', () {    test('is ignored while the setting is off', () async {
       await build({
         'ks.doorbell.enabled': false,
         'ks.doorbell.signatures': savedEufy,
@@ -488,17 +576,89 @@ void main() {
       expect((third.data as Map)['id'], 'eufy-3');
     });
 
-    test('doorbellAddSignature requires all three fields', () async {
+    test('doorbellAddSignature requires a label, a package and a '
+        'trigger', () async {
       await build({});
       for (final params in [
         {'label': '', 'package': 'p', 'channelPrefix': 'c'},
         {'label': 'l', 'package': '', 'channelPrefix': 'c'},
-        {'label': 'l', 'package': 'p', 'channelPrefix': ''},
       ]) {
         final result = await run('doorbellAddSignature', params);
         expect(result.ok, isFalse);
-        expect(result.error, 'label, package and channelPrefix are required');
+        expect(result.error, 'label and package are required');
       }
+      final result = await run('doorbellAddSignature', {
+        'label': 'l',
+        'package': 'p',
+      });
+      expect(result.ok, isFalse);
+      expect(result.error,
+          'a doorbell needs a notification channel or a Home Assistant '
+          'entity');
+    });
+
+    test('doorbellAddSignature saves a click doorbell with an entity',
+        () async {
+      await build({});
+      final result = await run('doorbellAddSignature', {
+        'label': 'Ring',
+        'package': 'com.ring',
+        'entity': 'binary_sensor.front_door_ringing',
+        'open': 'click',
+        'clickLabel': 'Front door',
+      });
+      expect(result.ok, isTrue);
+      expect(result.data, {
+        'id': 'ring',
+        'label': 'Ring',
+        'package': 'com.ring',
+        'channelPrefix': '',
+        'entity': 'binary_sensor.front_door_ringing',
+        'open': 'click',
+        'clickLabel': 'Front door',
+      });
+    });
+
+    test('doorbellAddSignature needs a click label for an entity',
+        () async {
+      await build({});
+      final result = await run('doorbellAddSignature', {
+        'label': 'Ring',
+        'package': 'com.ring',
+        'entity': 'binary_sensor.front_door_ringing',
+      });
+      expect(result.ok, isFalse);
+      expect(result.error, 'a Home Assistant ring needs a click label');
+    });
+
+    test('doorbellAddSignature needs a click label for a click doorbell',
+        () async {
+      await build({});
+      final result = await run('doorbellAddSignature', {
+        'label': 'Ring',
+        'package': 'com.ring',
+        'channelPrefix': 'pre',
+        'open': 'click',
+      });
+      expect(result.ok, isFalse);
+      expect(result.error, 'a click doorbell needs a click label');
+    });
+
+    test('doorbellAddSignature with only a channelPrefix keeps the four '
+        'old keys', () async {
+      await build({});
+      final result = await run('doorbellAddSignature', {
+        'label': 'Eufy',
+        'package': 'com.eufy',
+        'channelPrefix': 'pre',
+      });
+      expect(result.ok, isTrue);
+      expect(result.data, {
+        'id': 'eufy',
+        'label': 'Eufy',
+        'package': 'com.eufy',
+        'channelPrefix': 'pre',
+      });
     });
 
     test('doorbellAddSignature trims its fields', () async {
@@ -579,10 +739,230 @@ void main() {
       expect(result.ok, isFalse);
       expect(result.error, 'no such doorbell');
     });
+
+    test('doorbellUpdateSignature changes only the given keys', () async {
+      await build({
+        'ks.doorbell.signatures':
+            '[{"id":"eufy","label":"Eufy","package":"com.eufy",'
+            '"channelPrefix":"pre","entity":"binary_sensor.e",'
+            '"open":"click","clickLabel":"Front door"}]',
+      });
+      final result = await run('doorbellUpdateSignature', {
+        'id': 'eufy',
+        'label': 'Eufy 2',
+        'clickLabel': 'Back door',
+      });
+      expect(result.ok, isTrue);
+      expect(result.data, {
+        'id': 'eufy',
+        'label': 'Eufy 2',
+        'package': 'com.eufy',
+        'channelPrefix': 'pre',
+        'entity': 'binary_sensor.e',
+        'open': 'click',
+        'clickLabel': 'Back door',
+      });
+    });
+
+    test('doorbellUpdateSignature clears a field with an empty string',
+        () async {
+      await build({
+        'ks.doorbell.signatures':
+            '[{"id":"eufy","label":"Eufy","package":"com.eufy",'
+            '"channelPrefix":"pre","entity":"binary_sensor.e",'
+            '"clickLabel":"Front door"}]',
+      });
+      final result = await run('doorbellUpdateSignature', {
+        'id': 'eufy',
+        'entity': '',
+      });
+      expect(result.ok, isTrue);
+      expect(result.data, {
+        'id': 'eufy',
+        'label': 'Eufy',
+        'package': 'com.eufy',
+        'channelPrefix': 'pre',
+        'clickLabel': 'Front door',
+      });
+    });
+
+    test('doorbellUpdateSignature fails for an absent doorbell',
+        () async {
+      await build({'ks.doorbell.signatures': savedEufy});
+      final result = await run('doorbellUpdateSignature', {'id': 'nope'});
+      expect(result.ok, isFalse);
+      expect(result.error, 'no such doorbell');
+    });
+
+    test('doorbellUpdateSignature saves nothing when the rules break',
+        () async {
+      await build({'ks.doorbell.signatures': savedEufy});
+      final result = await run('doorbellUpdateSignature', {
+        'id': 'eufy',
+        'channelPrefix': '',
+      });
+      expect(result.ok, isFalse);
+      expect(result.error,
+          'a doorbell needs a notification channel or a Home Assistant '
+          'entity');
+      expect(settings.get(defs.doorbellSignatures), savedEufy);
+    });
   });
 
-  group('dispose', () {
-    test('a start that fails after dispose does not throw', () async {
+  group('the click capture', () {
+    test('doorbellClickAccess reports the native service', () async {
+      await build({'ks.doorbell.enabled': true});
+      final on = await run('doorbellClickAccess');
+      expect(on.ok, isTrue);
+      expect(on.data, {'running': true});
+      clickServiceRunning = false;
+      final off = await run('doorbellClickAccess');
+      expect(off.data, {'running': false});
+    });
+
+    test('doorbellClickAccess says false without a native side',
+        () async {
+      await build(
+        {'ks.doorbell.enabled': true},
+        error: MissingPluginException(),
+      );
+      final result = await run('doorbellClickAccess');
+      expect(result.ok, isTrue);
+      expect(result.data, {'running': false});
+    });
+
+    test('doorbellStartClickCapture refuses while the setting is off',
+        () async {
+      await build({'ks.doorbell.enabled': false});
+      final result = await run('doorbellStartClickCapture', {
+        'package': 'com.ring',
+      });
+      expect(result.ok, isFalse);
+      expect(result.error, 'the doorbell setting is off');
+      expect(
+        [for (final call in nativeCalls) call.method],
+        isNot(contains('startClickCapture')),
+      );
+    });
+
+    test('doorbellStartClickCapture refuses without a package',
+        () async {
+      await build({'ks.doorbell.enabled': true});
+      final result = await run('doorbellStartClickCapture', {
+        'package': '  ',
+      });
+      expect(result.ok, isFalse);
+      expect(result.error, 'package required');
+    });
+
+    test('doorbellStartClickCapture refuses while the service is off',
+        () async {
+      await build({'ks.doorbell.enabled': true});
+      clickServiceRunning = false;
+      final result = await run('doorbellStartClickCapture', {
+        'package': 'com.ring',
+      });
+      expect(result.ok, isFalse);
+      expect(result.error, 'enable Doorbell click access first');
+      expect(
+        [for (final call in nativeCalls) call.method],
+        isNot(contains('startClickCapture')),
+      );
+    });
+
+    test('doorbellStartClickCapture starts the native capture', () async {
+      await build({'ks.doorbell.enabled': true});
+      final result = await run('doorbellStartClickCapture', {
+        'package': ' com.ring ',
+      });
+      expect(result.ok, isTrue);
+      expect(
+        nativeCalls.firstWhere((call) => call.method == 'startClickCapture')
+            .arguments,
+        {'package': 'com.ring', 'seconds': 90},
+      );
+      expect(doorbell.clickCapturing.value, isTrue);
+    });
+
+    test('doorbellStartClickCapture fails and stands down when the native '
+        'start says no', () async {
+      await build({'ks.doorbell.enabled': true});
+      messenger.setMockMethodCallHandler(channel, (call) async {
+        nativeCalls.add(call);
+        if (call.method == 'clickServiceRunning') return true;
+        if (call.method == 'startClickCapture') return false;
+        return null;
+      });
+      final result = await run('doorbellStartClickCapture', {
+        'package': 'com.ring',
+      });
+      expect(result.ok, isFalse);
+      expect(result.error, 'could not open the app');
+      expect(doorbell.clickCapturing.value, isFalse);
+    });
+
+    test('doorbellStopClickCapture stops the native capture', () async {
+      await build({'ks.doorbell.enabled': true});
+      await run('doorbellStartClickCapture', {'package': 'com.ring'});
+      final result = await run('doorbellStopClickCapture');
+      expect(result.ok, isTrue);
+      expect(
+        nativeCalls.firstWhere((call) => call.method == 'stopClickCapture')
+            .arguments,
+        equals(<String, Object?>{}),
+      );
+      expect(doorbell.clickCapturing.value, isFalse);
+    });
+
+    test('a native click capture reports its click and comes back',
+        () async {
+      await build({'ks.doorbell.enabled': true});
+      await fromNative('clickCaptured', {
+        'package': 'com.ring',
+        'label': 'Front door',
+      });
+      final capture = doorbell.clickCaptured.value;
+      expect(capture, isNotNull);
+      expect(capture!.package, 'com.ring');
+      expect(capture.label, 'Front door');
+      await pumpEventQueue();
+      expect(stubNames(), ['bringToFront']);
+      expect(stubParams('bringToFront'), equals(<String, Object?>{}));
+    });
+
+    test('ends when the native side says so', () async {
+      await build({'ks.doorbell.enabled': true});
+      await run('doorbellStartClickCapture', {'package': 'com.ring'});
+      expect(doorbell.clickCapturing.value, isTrue);
+      await fromNative('clickCaptureEnded', {'reason': 'timeout'});
+      expect(doorbell.clickCapturing.value, isFalse);
+    });
+
+    test('turning the setting off ends a running click capture',
+        () async {
+      await build({
+        'ks.doorbell.enabled': true,
+        'ks.doorbell.signatures': savedEufy,
+      });
+      await run('doorbellStartClickCapture', {'package': 'com.ring'});
+      await fromNative('clickCaptured', {
+        'package': 'com.ring',
+        'label': 'Front door',
+      });
+      expect(doorbell.clickCaptured.value, isNotNull);
+      await settings.set(defs.doorbellEnabled, false);
+      await pumpEventQueue();
+      expect(
+        nativeCalls.firstWhere((call) => call.method == 'stopClickCapture')
+            .arguments,
+        equals(<String, Object?>{}),
+      );
+      expect(doorbell.clickCapturing.value, isFalse);
+      expect(doorbell.clickCaptured.value, isNull);
+    });
+  });
+
+  group('dispose', () {    test('a start that fails after dispose does not throw', () async {
       await build({'ks.doorbell.enabled': true});
       final lateStart = Completer<void>();
       messenger.setMockMethodCallHandler(channel, (call) async {

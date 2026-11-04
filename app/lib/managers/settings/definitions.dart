@@ -1511,6 +1511,19 @@ const doorbellReturnSeconds = SettingDef<num>(
   dependsOn: 'doorbell.enabled',
 );
 
+const doorbellClickDelaySeconds = SettingDef<num>(
+  key: 'doorbell.click_delay_seconds',
+  type: SettingType.number,
+  defaultValue: 8,
+  min: 0,
+  title: 'Wait before tapping (seconds)',
+  description:
+      'How long after the doorbell app opens the kiosk waits before it '
+      'taps the camera. A slow tablet or a slow app needs longer.',
+  category: 'Doorbell',
+  dependsOn: 'doorbell.enabled',
+);
+
 // The doorbell apps as a JSON list of {id, label, package, channelPrefix}
 // (see doorbell_signature.dart): a string holding a JSON list, like
 // launcher.apps, decoded tolerantly on read.
@@ -13252,6 +13265,7 @@ const List<SettingDef<Object>> allSettings = [
   launcherMenu,
   doorbellEnabled,
   doorbellReturnSeconds,
+  doorbellClickDelaySeconds,
   doorbellSignatures,
   // The Screen & Audio page: screen first, then the volume mixer, then the
   // hand-built device pickers, then capture tuning. Both UIs render this
