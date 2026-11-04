@@ -3,12 +3,15 @@ package me.jxl.kiosk_satellite
 import android.app.ActivityOptions
 import android.app.PendingIntent
 import android.content.Context
+import android.content.Intent
 import android.os.Build
 import android.os.Handler
 import android.os.Looper
 import android.os.SystemClock
+import android.provider.Settings
 import android.util.Log
 import io.flutter.plugin.common.BinaryMessenger
+import io.flutter.plugin.common.MethodCall
 import io.flutter.plugin.common.MethodChannel
 
 /**
@@ -22,6 +25,9 @@ import io.flutter.plugin.common.MethodChannel
  * for within [KEEP_MS] is dropped. Dart can also open a capture window,
  * during which the listener reports the next notification from another app
  * instead of matching a ring.
+ * The Doorbell click rides the same channel: Dart asks here to launch the
+ * saved doorbell app and start DoorbellClickService's click job or teach
+ * window, and the service's results are pushed back the same way.
  */
 class DoorbellBridge(
     context: Context,
@@ -33,6 +39,12 @@ class DoorbellBridge(
         private const val CAPTURE_MIN_SECONDS = 5L
         private const val CAPTURE_MAX_SECONDS = 120L
         private const val CAPTURE_DEFAULT_SECONDS = 60L
+        private const val CLICK_DELAY_DEFAULT_SECONDS = 8L
+        private const val CLICK_DELAY_MAX_SECONDS = 120L
+        private const val CLICK_WINDOW_DEFAULT_SECONDS = 15L
+        private const val CLICK_WINDOW_MIN_SECONDS = 5L
+        private const val CLICK_WINDOW_MAX_SECONDS = 60L
+        private const val CLICK_CAPTURE_DEFAULT_SECONDS = 90
 
         @Volatile
         private var instance: DoorbellBridge? = null
@@ -104,6 +116,19 @@ class DoorbellBridge(
                         startCapture(call.argument<Number>("seconds")),
                     )
                     "stopCapture" -> result.success(stopCapture())
+                    "clickServiceRunning" -> result.success(
+                        DoorbellClickService.running,
+                    )
+                    "openClickSettings" -> result.success(openClickSettings())
+                    "configureClick" -> result.success(
+                        configureClick(call.argument<Any?>("packages")),
+                    )
+                    "launchAndClick" -> result.success(launchAndClick(call))
+                    "startClickCapture" -> result.success(startClickCapture(call))
+                    "stopClickCapture" -> {
+                        DoorbellClickService.instance?.stopCapture()
+                        result.success(true)
+                    }
                     else -> result.notImplemented()
                 }
             } catch (e: Exception) {
@@ -213,6 +238,110 @@ class DoorbellBridge(
      *  by its timeout, by stopCapture or by the notification it caught. The
      *  flag is the one truth, so no clock can disagree with the token. */
     private fun isCaptureWindowOpen(): Boolean = captureOpen
+
+    /** Open Android's Accessibility settings, where the owner enables the
+     *  Doorbell click once. False when Android refuses the start. */
+    private fun openClickSettings(): Boolean {
+        return try {
+            context.startActivity(
+                Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS)
+                    .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK),
+            )
+            true
+        } catch (_: Exception) {
+            false
+        }
+    }
+
+    /** Save the doorbell packages the click service may read, and widen its
+     *  event filter to them. */
+    private fun configureClick(raw: Any?): Boolean {
+        DoorbellClickService.configure(
+            (raw as? List<*>)?.filterIsInstance<String>() ?: emptyList(),
+        )
+        return true
+    }
+
+    /** Launch the saved doorbell app fresh and start the click job for its
+     *  camera card. True when the launch started; the job's result then
+     *  arrives as a "clickResult" push, "service_off" at once when the
+     *  click service is not enabled. False when there is no launch intent
+     *  or Android refused it. */
+    private fun launchAndClick(call: MethodCall): Boolean {
+        val pkg = call.argument<String>("package")
+            ?: throw IllegalArgumentException("package is required")
+        val label = call.argument<String>("label")
+            ?: throw IllegalArgumentException("label is required")
+        val delaySeconds = (call.argument<Number>("delaySeconds")?.toLong()
+            ?: CLICK_DELAY_DEFAULT_SECONDS).coerceIn(0L, CLICK_DELAY_MAX_SECONDS)
+        val windowSeconds = (call.argument<Number>("windowSeconds")?.toLong()
+            ?: CLICK_WINDOW_DEFAULT_SECONDS).coerceIn(
+                CLICK_WINDOW_MIN_SECONDS,
+                CLICK_WINDOW_MAX_SECONDS,
+            )
+        val started = launchFresh(pkg)
+        if (started) {
+            if (DoorbellClickService.running) {
+                DoorbellClickService.instance?.startClick(
+                    pkg,
+                    label,
+                    delaySeconds * 1000,
+                    windowSeconds * 1000,
+                ) { r ->
+                    push(
+                        "clickResult",
+                        mapOf("package" to pkg, "label" to label, "result" to r),
+                    )
+                }
+            } else {
+                push(
+                    "clickResult",
+                    mapOf("package" to pkg, "label" to label, "result" to "service_off"),
+                )
+            }
+        }
+        return started
+    }
+
+    /** Launch the doorbell app and open the window that learns the saved
+     *  card's label from the one you tap. False when the click service is
+     *  not enabled or the launch failed; the label arrives as a
+     *  "clickCaptured" push and the window's end as "clickCaptureEnded". */
+    private fun startClickCapture(call: MethodCall): Boolean {
+        val pkg = call.argument<String>("package")
+            ?: throw IllegalArgumentException("package is required")
+        val seconds =
+            call.argument<Number>("seconds")?.toInt() ?: CLICK_CAPTURE_DEFAULT_SECONDS
+        if (!DoorbellClickService.running) return false
+        if (!launchFresh(pkg)) return false
+        DoorbellClickService.instance?.startCapture(
+            pkg,
+            seconds,
+            onCaptured = { label ->
+                push("clickCaptured", mapOf("package" to pkg, "label" to label))
+            },
+            onEnded = { reason ->
+                push("clickCaptureEnded", mapOf("reason" to reason))
+            },
+        )
+        return true
+    }
+
+    /** Launch [pkg] at its home screen. False when there is no launch
+     *  intent or Android refuses the start. */
+    private fun launchFresh(pkg: String): Boolean {
+        val intent = context.packageManager.getLaunchIntentForPackage(pkg) ?: return false
+        // CLEAR_TASK restarts the app at its home screen, so the card is
+        // where the saved label expects it.
+        intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK)
+        return try {
+            context.startActivity(intent)
+            true
+        } catch (e: Exception) {
+            Log.w(TAG, "launch failed: ${e.javaClass.simpleName}")
+            false
+        }
+    }
 
     /** Send the held tap action. False when there is none, or Android
      *  refuses it. */
