@@ -39,6 +39,9 @@ void main() {
   Object? nativeError;
   late bool openFails;
 
+  /// Whether the openAppAndClick stub fails its open.
+  late bool clickOpenFails;
+
   /// Whether the mocked native click service reports itself running.
   late bool clickServiceRunning;
 
@@ -51,11 +54,24 @@ void main() {
   const savedEufy =
       '[{"id":"eufy","label":"Eufy Security","package":"com.oceanwing.battery.cam",'
       '"channelPrefix":"com.ocean.battery.cam.ring"}]';
+  const savedClickEufy =
+      '[{"id":"eufy","label":"Eufy Security","package":"com.oceanwing.battery.cam",'
+      '"channelPrefix":"com.ocean.battery.cam.ring",'
+      '"open":"click","clickLabel":"Front door"}]';
+  const savedTapEufyWithClick =
+      '[{"id":"eufy","label":"Eufy Security","package":"com.oceanwing.battery.cam",'
+      '"channelPrefix":"com.ocean.battery.cam.ring",'
+      '"clickLabel":"Front door"}]';
+  const savedEntityDoorbell =
+      '[{"id":"ring","label":"Ring","package":"com.ring",'
+      '"entity":"binary_sensor.front_door_ringing",'
+      '"clickLabel":"Front door"}]';
 
   Future<void> build(
     Map<String, Object> initial, {
     Object? error,
     bool openNotificationFails = false,
+    bool openClickFails = false,
   }) async {
     SharedPreferences.setMockInitialValues(initial);
     bus = EventBus();
@@ -68,6 +84,7 @@ void main() {
     haEvents = [];
     nativeError = error;
     openFails = openNotificationFails;
+    clickOpenFails = openClickFails;
     clickServiceRunning = true;
     messenger.setMockMethodCallHandler(channel, (call) async {
       nativeCalls.add(call);
@@ -101,6 +118,18 @@ void main() {
         handler: (params) async {
           stubCalls.add(('openNotificationAction', params));
           return openFails
+              ? const CommandResult.fail('x')
+              : const CommandResult.ok();
+        },
+      ),
+    );
+    commands.register(
+      Command(
+        name: 'openAppAndClick',
+        description: 'stub',
+        handler: (params) async {
+          stubCalls.add(('openAppAndClick', params));
+          return clickOpenFails
               ? const CommandResult.fail('x')
               : const CommandResult.ok();
         },
@@ -341,6 +370,8 @@ void main() {
         'doorbell': 'Front door',
         'label': 'Front door',
         'opened': false,
+        'trigger': 'notification',
+        'open': 'tap',
       });
     });
 
@@ -370,6 +401,8 @@ void main() {
         'doorbell': 'Front door',
         'label': 'Front door',
         'opened': true,
+        'trigger': 'notification',
+        'open': 'tap',
       });
     });
 
@@ -408,12 +441,307 @@ void main() {
       expect(haEvents.last.data['label'], 'Back door');
     });
 
+    test('a click doorbell opens by click, not by tap', () async {
+      await build({
+        'ks.doorbell.enabled': true,
+        'ks.doorbell.signatures': savedClickEufy,
+      });
+      await ring(title: 'Someone at the door', signatureId: 'eufy');
+      expect(stubNames(), ['screenOn', 'openAppAndClick']);
+      expect(stubParams('openAppAndClick'), {
+        'package': 'com.oceanwing.battery.cam',
+        'label': 'Front door',
+        'delaySeconds': 8,
+        'returnAfterSeconds': 75,
+      });
+      await pumpEventQueue();
+      expect(haEvents.single.data, {
+        'event_type': 'ringing',
+        'doorbell': 'Someone at the door',
+        'label': 'Eufy Security',
+        'opened': true,
+        'trigger': 'notification',
+        'open': 'click',
+      });
+    });
+
+    test('the click delay and return settings are honoured', () async {
+      await build({
+        'ks.doorbell.enabled': true,
+        'ks.doorbell.click_delay_seconds': 3,
+        'ks.doorbell.return_seconds': 40,
+        'ks.doorbell.signatures': savedClickEufy,
+      });
+      await ring(title: 'Someone at the door', signatureId: 'eufy');
+      expect(stubParams('openAppAndClick'), {
+        'package': 'com.oceanwing.battery.cam',
+        'label': 'Front door',
+        'delaySeconds': 3,
+        'returnAfterSeconds': 40,
+      });
+    });
+
+    test('a failed tap falls back to a click when there is a click label',
+        () async {
+      await build(
+        {
+          'ks.doorbell.enabled': true,
+          'ks.doorbell.signatures': savedTapEufyWithClick,
+        },
+        openNotificationFails: true,
+      );
+      await ring(title: 'Someone at the door', signatureId: 'eufy');
+      expect(stubNames(),
+          ['screenOn', 'openNotificationAction', 'openAppAndClick']);
+      await pumpEventQueue();
+      expect(haEvents.single.data['open'], 'click');
+      expect(haEvents.single.data['opened'], isTrue);
+    });
+
+    test('a failed tap without a click label does not fall back', () async {
+      await build(
+        {
+          'ks.doorbell.enabled': true,
+          'ks.doorbell.signatures': savedEufy,
+        },
+        openNotificationFails: true,
+      );
+      await ring(title: 'Someone at the door', signatureId: 'eufy');
+      expect(stubNames(), ['screenOn', 'openNotificationAction']);
+      await pumpEventQueue();
+      expect(haEvents.single.data['opened'], isFalse);
+      expect(haEvents.single.data['open'], 'tap');
+    });
+
     test('does nothing without a notification key', () async {
       await build({'ks.doorbell.enabled': true});
       await ring(key: '');
       expect(stubCalls, isEmpty);
       await pumpEventQueue();
       expect(haEvents, isEmpty);
+    });
+  });
+
+  group('an entity ring', () {
+    test('opens by click and publishes the entity event', () async {
+      await build({
+        'ks.doorbell.enabled': true,
+        'ks.doorbell.signatures': savedEntityDoorbell,
+      });
+      await doorbell.ringFromEntity('ring');
+      expect(stubNames(), ['screenOn', 'openAppAndClick']);
+      expect(stubParams('openAppAndClick'), {
+        'package': 'com.ring',
+        'label': 'Front door',
+        'delaySeconds': 8,
+        'returnAfterSeconds': 75,
+      });
+      await pumpEventQueue();
+      expect(haEvents.single.data, {
+        'event_type': 'ringing',
+        'doorbell': 'Ring',
+        'label': 'Ring',
+        'opened': true,
+        'trigger': 'entity',
+        'open': 'click',
+      });
+    });
+
+    test('is ignored while the setting is off and starts no window',
+        () async {
+      await build({
+        'ks.doorbell.enabled': false,
+        'ks.doorbell.signatures': savedEntityDoorbell,
+      });
+      var now = DateTime(2024, 1, 1);
+      doorbell.clock = () => now;
+      await doorbell.ringFromEntity('ring');
+      expect(stubCalls, isEmpty);
+      await pumpEventQueue();
+      expect(haEvents, isEmpty);
+      await settings.set(defs.doorbellEnabled, true);
+      await pumpEventQueue();
+      now = now.add(const Duration(seconds: 2));
+      await doorbell.ringFromEntity('ring');
+      expect(stubNames(), ['screenOn', 'openAppAndClick']);
+      await pumpEventQueue();
+      expect(haEvents, hasLength(1));
+    });
+
+    test('under lockdown opens nothing and publishes opened false',
+        () async {
+      await build({
+        'ks.doorbell.enabled': true,
+        'ks.lockdown.enabled': true,
+        'ks.doorbell.signatures': savedEntityDoorbell,
+      });
+      await doorbell.ringFromEntity('ring');
+      expect(stubCalls, isEmpty);
+      await pumpEventQueue();
+      expect(haEvents.single.data['opened'], isFalse);
+      expect(haEvents.single.data['trigger'], 'entity');
+    });
+
+    test('ignores a second ring within 20 s and accepts a later one',
+        () async {
+      await build({
+        'ks.doorbell.enabled': true,
+        'ks.doorbell.signatures': savedEntityDoorbell,
+      });
+      var now = DateTime(2024, 1, 1);
+      doorbell.clock = () => now;
+      await doorbell.ringFromEntity('ring');
+      await pumpEventQueue();
+      expect(haEvents, hasLength(1));
+      now = now.add(const Duration(seconds: 19));
+      await doorbell.ringFromEntity('ring');
+      await pumpEventQueue();
+      expect(haEvents, hasLength(1));
+      now = now.add(const Duration(seconds: 2));
+      await doorbell.ringFromEntity('ring');
+      await pumpEventQueue();
+      expect(haEvents, hasLength(2));
+    });
+
+    test('does nothing for an unknown id or a doorbell without an entity',
+        () async {
+      await build({
+        'ks.doorbell.enabled': true,
+        'ks.doorbell.signatures': savedEufy,
+      });
+      await doorbell.ringFromEntity('nope');
+      await doorbell.ringFromEntity('eufy');
+      expect(stubCalls, isEmpty);
+      await pumpEventQueue();
+      expect(haEvents, isEmpty);
+    });
+  });
+
+  group('a click result', () {
+    test('not_found, wrong_app and service_off publish click_failed',
+        () async {
+      await build({
+        'ks.doorbell.enabled': true,
+        'ks.doorbell.signatures': savedClickEufy,
+      });
+      await ring(title: 'Someone at the door', signatureId: 'eufy');
+      await pumpEventQueue();
+      expect(haEvents, hasLength(1));
+      for (final reason in ['not_found', 'wrong_app', 'service_off']) {
+        await fromNative('clickResult', {
+          'package': 'com.oceanwing.battery.cam',
+          'label': 'Front door',
+          'result': reason,
+        });
+        await pumpEventQueue();
+        expect(haEvents.last.data, {
+          'event_type': 'click_failed',
+          'doorbell': 'Eufy Security',
+          'label': 'Front door',
+          'reason': reason,
+        });
+      }
+      expect(haEvents, hasLength(4));
+    });
+
+    test('a clicked result publishes nothing', () async {
+      await build({
+        'ks.doorbell.enabled': true,
+        'ks.doorbell.signatures': savedClickEufy,
+      });
+      await ring(title: 'Someone at the door', signatureId: 'eufy');
+      await pumpEventQueue();
+      await fromNative('clickResult', {
+        'package': 'com.oceanwing.battery.cam',
+        'label': 'Front door',
+        'result': 'clicked',
+      });
+      await pumpEventQueue();
+      expect(haEvents, hasLength(1));
+    });
+
+    test('a result for a label no ring used names the label', () async {
+      await build({
+        'ks.doorbell.enabled': true,
+        'ks.doorbell.signatures': savedClickEufy,
+      });
+      await fromNative('clickResult', {
+        'package': 'com.oceanwing.battery.cam',
+        'label': 'Unknown card',
+        'result': 'not_found',
+      });
+      await pumpEventQueue();
+      expect(haEvents.single.data, {
+        'event_type': 'click_failed',
+        'doorbell': 'Unknown card',
+        'label': 'Unknown card',
+        'reason': 'not_found',
+      });
+    });
+
+    test('never throws on missing keys', () async {
+      await build({'ks.doorbell.enabled': true});
+      await fromNative('clickResult', const {});
+      await pumpEventQueue();
+      expect(haEvents.single.data, {
+        'event_type': 'click_failed',
+        'doorbell': '',
+        'label': '',
+        'reason': '',
+      });
+    });
+  });
+
+  group('doorbellTestOpen', () {
+    test('opens by click and returns ok without an event', () async {
+      await build({
+        'ks.doorbell.enabled': true,
+        'ks.doorbell.signatures': savedClickEufy,
+      });
+      final result = await run('doorbellTestOpen', {'id': 'eufy'});
+      expect(result.ok, isTrue);
+      expect(stubNames(), ['screenOn', 'openAppAndClick']);
+      expect(stubParams('openAppAndClick'), {
+        'package': 'com.oceanwing.battery.cam',
+        'label': 'Front door',
+        'delaySeconds': 8,
+        'returnAfterSeconds': 75,
+      });
+      await pumpEventQueue();
+      expect(haEvents, isEmpty);
+    });
+
+    test('fails while the setting is off', () async {
+      await build({
+        'ks.doorbell.enabled': false,
+        'ks.doorbell.signatures': savedClickEufy,
+      });
+      final result = await run('doorbellTestOpen', {'id': 'eufy'});
+      expect(result.ok, isFalse);
+      expect(result.error, 'the doorbell setting is off');
+      expect(stubCalls, isEmpty);
+    });
+
+    test('fails for an unknown id', () async {
+      await build({
+        'ks.doorbell.enabled': true,
+        'ks.doorbell.signatures': savedClickEufy,
+      });
+      final result = await run('doorbellTestOpen', {'id': 'nope'});
+      expect(result.ok, isFalse);
+      expect(result.error, 'no such doorbell');
+      expect(stubCalls, isEmpty);
+    });
+
+    test('fails without a click label', () async {
+      await build({
+        'ks.doorbell.enabled': true,
+        'ks.doorbell.signatures': savedEufy,
+      });
+      final result = await run('doorbellTestOpen', {'id': 'eufy'});
+      expect(result.ok, isFalse);
+      expect(result.error, 'this doorbell has no click label');
+      expect(stubCalls, isEmpty);
     });
   });
 
