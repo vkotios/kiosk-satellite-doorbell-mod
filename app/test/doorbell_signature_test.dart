@@ -74,6 +74,86 @@ void main() {
       expect(decodeDoorbellSignatures(''), isEmpty);
     });
 
+    test('decodes an old four-key entry to the tap defaults and encodes '
+        'it back to the same four keys', () {
+      final decoded = decodeDoorbellSignatures(
+        '[{"id":"eufy","label":"Eufy Security",'
+        '"package":"com.oceanwing.battery.cam",'
+        '"channelPrefix":"com.ocean.battery.cam.ring"}]',
+      );
+      expect(decoded, hasLength(1));
+      expect(decoded.single.entity, '');
+      expect(decoded.single.open, 'tap');
+      expect(decoded.single.clickLabel, '');
+      expect(decoded.single.toJson(), {
+        'id': 'eufy',
+        'label': 'Eufy Security',
+        'package': 'com.oceanwing.battery.cam',
+        'channelPrefix': 'com.ocean.battery.cam.ring',
+      });
+      expect(
+        encodeDoorbellSignatures(decoded),
+        '[{"id":"eufy","label":"Eufy Security",'
+        '"package":"com.oceanwing.battery.cam",'
+        '"channelPrefix":"com.ocean.battery.cam.ring"}]',
+      );
+    });
+
+    test('drops a doorbell nothing can ring or open', () {
+      final decoded = decodeDoorbellSignatures(
+        '[{"id":"a","package":"com.a","entity":"binary_sensor.a"},'
+        '{"id":"b","package":"com.b","channelPrefix":"com.b.ring",'
+        '"open":"click"},'
+        '{"id":"c","package":"com.c"},'
+        '{"package":"com.d","channelPrefix":"com.d.ring"},'
+        '{"id":"e","channelPrefix":"com.e.ring"}]',
+      );
+      expect(decoded, isEmpty);
+    });
+
+    test('keeps both triggers together and a click-open doorbell', () {
+      final decoded = decodeDoorbellSignatures(
+        '[{"id":"a","label":"A","package":"com.a",'
+        '"channelPrefix":"com.a.ring","entity":"binary_sensor.a",'
+        '"clickLabel":"A"},'
+        '{"id":"b","label":"B","package":"com.b",'
+        '"channelPrefix":"com.b.ring","open":"click","clickLabel":"B"}]',
+      );
+      expect(decoded, hasLength(2));
+      expect(decoded[0].rungByNotification, isTrue);
+      expect(decoded[0].rungByEntity, isTrue);
+      expect(decoded[0].opensByClick, isFalse);
+      expect(decoded[1].rungByNotification, isTrue);
+      expect(decoded[1].rungByEntity, isFalse);
+      expect(decoded[1].opensByClick, isTrue);
+    });
+
+    test("decodes every stored 'open' but 'click' as 'tap'", () {
+      final decoded = decodeDoorbellSignatures(
+        '[{"id":"a","package":"com.a","channelPrefix":"com.a.ring",'
+        '"open":"CLICK"},'
+        '{"id":"b","package":"com.b","channelPrefix":"com.b.ring",'
+        '"open":"tab"},'
+        '{"id":"c","package":"com.c","channelPrefix":"com.c.ring",'
+        '"open":""}]',
+      );
+      expect(decoded, hasLength(3));
+      expect(decoded[0].open, 'tap');
+      expect(decoded[1].open, 'tap');
+      expect(decoded[2].open, 'tap');
+    });
+
+    test('trims entity and clickLabel too', () {
+      final decoded = decodeDoorbellSignatures(
+        '[{"id":"a","package":"com.a","channelPrefix":"com.a.ring",'
+        '"entity":" binary_sensor.a ","open":" click ",'
+        '"clickLabel":" A "}]',
+      );
+      expect(decoded.single.entity, 'binary_sensor.a');
+      expect(decoded.single.open, 'click');
+      expect(decoded.single.clickLabel, 'A');
+    });
+
     test('keeps the first of two entries sharing an id', () {
       final decoded = decodeDoorbellSignatures(
         '[{"id":"eufy","label":"First","package":"com.first",'
@@ -84,6 +164,77 @@ void main() {
       expect(decoded, hasLength(1));
       expect(decoded.single.label, 'First');
       expect(decoded.single.package, 'com.first');
+    });
+  });
+
+  group('DoorbellSignature', () {
+    test('round trips an entity doorbell with a clickLabel', () {
+      const signature = DoorbellSignature(
+        id: 'front',
+        label: 'Front door',
+        package: 'com.front',
+        entity: 'binary_sensor.front_door_ringing',
+        open: 'click',
+        clickLabel: 'Front door',
+      );
+      expect(signature.toJson(), {
+        'id': 'front',
+        'label': 'Front door',
+        'package': 'com.front',
+        'channelPrefix': '',
+        'entity': 'binary_sensor.front_door_ringing',
+        'open': 'click',
+        'clickLabel': 'Front door',
+      });
+      final decoded =
+          decodeDoorbellSignatures(encodeDoorbellSignatures([signature]));
+      expect(decoded, hasLength(1));
+      expect(decoded.single.toJson(), signature.toJson());
+      expect(decoded.single.entity, signature.entity);
+      expect(decoded.single.open, signature.open);
+      expect(decoded.single.clickLabel, signature.clickLabel);
+    });
+
+    test('omits entity, open and clickLabel from toJson for a default '
+        'doorbell', () {
+      const signature = DoorbellSignature(
+        id: 'eufy',
+        label: 'Eufy Security',
+        package: 'com.oceanwing.battery.cam',
+      );
+      expect(signature.channelPrefix, '');
+      expect(signature.toJson(), {
+        'id': 'eufy',
+        'label': 'Eufy Security',
+        'package': 'com.oceanwing.battery.cam',
+        'channelPrefix': '',
+      });
+      expect(signature.toJson().containsKey('entity'), isFalse);
+      expect(signature.toJson().containsKey('open'), isFalse);
+      expect(signature.toJson().containsKey('clickLabel'), isFalse);
+    });
+
+    test('tells how a doorbell rings and opens', () {
+      const notification = DoorbellSignature(
+        id: 'a',
+        label: 'A',
+        package: 'com.a',
+        channelPrefix: 'com.a.ring',
+      );
+      expect(notification.rungByNotification, isTrue);
+      expect(notification.rungByEntity, isFalse);
+      expect(notification.opensByClick, isFalse);
+      const entity = DoorbellSignature(
+        id: 'b',
+        label: 'B',
+        package: 'com.b',
+        entity: 'binary_sensor.b',
+        open: 'click',
+        clickLabel: 'B',
+      );
+      expect(entity.rungByNotification, isFalse);
+      expect(entity.rungByEntity, isTrue);
+      expect(entity.opensByClick, isTrue);
     });
   });
 
