@@ -1482,19 +1482,23 @@ const launcherMenu = SettingDef<bool>(
   linksTo: 'ui.drawer_items',
 );
 
-// A doorbell that rings in another app (Eufy Security today): when the
-// app announces the ring, the kiosk fires that notification's own tap
-// action, which opens the camera that rang, and the launcher's auto-return
-// brings the kiosk back. Needs the Notification access grant, the same as
-// the media session source.
+// A doorbell that rings in another app (Eufy Security today): a ring
+// arrives as the app's notification or as a Home Assistant entity
+// turning on, and the kiosk opens the camera that rang by tapping the
+// notification or by clicking the taught card, after which the
+// launcher's auto-return brings the kiosk back. The first needs the
+// Notification access grant, the same as the media session source; the
+// second the Doorbell click access grant.
 const doorbellEnabled = SettingDef<bool>(
   key: 'doorbell.enabled',
   type: SettingType.boolean,
   defaultValue: false,
   title: 'Open the doorbell app on a ring',
   description:
-      'When a doorbell app announces a ring, open its live view over the '
-      'kiosk. Needs Notification access.',
+      'When a doorbell rings, as a notification or as a Home Assistant '
+      'entity turning on, open its live view over the kiosk: by tapping '
+      'the notification (Notification access) or by clicking the taught '
+      'card (Doorbell click access).',
   category: 'Doorbell',
 );
 
@@ -1524,15 +1528,16 @@ const doorbellClickDelaySeconds = SettingDef<num>(
   dependsOn: 'doorbell.enabled',
 );
 
-// The doorbell apps as a JSON list of {id, label, package, channelPrefix}
-// (see doorbell_signature.dart): a string holding a JSON list, like
+// The doorbells as a JSON list of {id, label, package, channelPrefix,
+// entity, open, clickLabel} (see doorbell_signature.dart), where entity
+// and clickLabel are optional: a string holding a JSON list, like
 // launcher.apps, decoded tolerantly on read.
 const doorbellSignatures = SettingDef<String>(
   key: 'doorbell.signatures',
   type: SettingType.string,
   defaultValue: '[]',
   title: 'Doorbells',
-  description: 'The doorbell apps that open on a ring.',
+  description: 'The doorbells: how each rings and opens.',
   category: 'Doorbell',
   dependsOn: 'doorbell.enabled',
 );

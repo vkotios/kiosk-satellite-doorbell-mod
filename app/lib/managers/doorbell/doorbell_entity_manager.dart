@@ -174,7 +174,15 @@ class DoorbellEntityManager extends Manager {
   }
 
   void _onState(String entityId, Map<String, Object?> state) =>
-      applyEntityState(entityId, state['state']);
+      applyStateMap(entityId, state);
+
+  /// One update from the subscription: an attribute-only update carries
+  /// no 'state' key, so it is not a reading and the stored state stands.
+  @visibleForTesting
+  void applyStateMap(String entityId, Map<String, Object?> state) {
+    if (!state.containsKey('state')) return;
+    applyEntityState(entityId, state['state']);
+  }
 
   /// One state from the subscription: `on` rings the doorbells whose
   /// entity this is, but only a turn on does; anything else (unavailable,

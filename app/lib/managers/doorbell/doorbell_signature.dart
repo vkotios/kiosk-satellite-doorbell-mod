@@ -66,15 +66,28 @@ const eufySignature = DoorbellSignature(
   channelPrefix: 'com.ocean.battery.cam.ring',
 );
 
+/// A Home Assistant entity id: [raw] trimmed and lower-cased, or null
+/// when that is not `domain.object_id`, both parts letters, digits and
+/// underscores.
+String? normalizeDoorbellEntity(String raw) {
+  final entity = raw.trim().toLowerCase();
+  return RegExp(r'^[a-z0-9_]+\.[a-z0-9_]+$').hasMatch(entity)
+      ? entity
+      : null;
+}
+
 /// Decode doorbell.signatures, dropping anything malformed rather than
 /// failing: the setting can arrive over the API. Every string is
-/// trimmed, an entry that is not a map or whose id or package is empty
-/// is dropped, as is one nothing can ring (neither channelPrefix nor
-/// entity), one a Home Assistant ring could not open (an entity without
-/// a clickLabel), and one that opens by a click without a clickLabel.
-/// A missing or empty label falls back to the package, 'open' is
-/// 'click' only when stored as exactly that, and the first of two
-/// entries sharing an id wins.
+/// trimmed, an entity that is not an entity id (see
+/// [normalizeDoorbellEntity]) is treated as having none, and an entry
+/// that is not a map or whose id or package is empty is dropped, as is
+/// one nothing can ring (neither channelPrefix nor entity), one a Home
+/// Assistant ring could not open (an entity without a clickLabel), and
+/// one only a click could open (a click open without a clickLabel and
+/// no channelPrefix). A missing or empty label falls back to the
+/// package, 'open' is 'click' only when stored as exactly that and
+/// taught a clickLabel (a notification doorbell without one opens by
+/// the tap), and the first of two entries sharing an id wins.
 List<DoorbellSignature> decodeDoorbellSignatures(String json) {
   try {
     final raw = jsonDecode(json);
@@ -86,14 +99,18 @@ List<DoorbellSignature> decodeDoorbellSignatures(String json) {
       final id = '${item['id'] ?? ''}'.trim();
       final package = '${item['package'] ?? ''}'.trim();
       final channelPrefix = '${item['channelPrefix'] ?? ''}'.trim();
-      final entity = '${item['entity'] ?? ''}'.trim();
+      final entity = normalizeDoorbellEntity('${item['entity'] ?? ''}') ?? '';
       final clickLabel = '${item['clickLabel'] ?? ''}'.trim();
       final open =
           '${item['open'] ?? ''}'.trim() == 'click' ? 'click' : 'tap';
       if (id.isEmpty || package.isEmpty) continue;
       if (channelPrefix.isEmpty && entity.isEmpty) continue;
       if (entity.isNotEmpty && clickLabel.isEmpty) continue;
-      if (open == 'click' && clickLabel.isEmpty) continue;
+      // A click open without a clickLabel cannot work; a doorbell a
+      // notification still rings is kept, opening by the tap instead.
+      if (open == 'click' && clickLabel.isEmpty && channelPrefix.isEmpty) {
+        continue;
+      }
       if (!seen.add(id)) continue;
       var label = '${item['label'] ?? ''}'.trim();
       if (label.isEmpty) label = package;
@@ -104,7 +121,7 @@ List<DoorbellSignature> decodeDoorbellSignatures(String json) {
           package: package,
           channelPrefix: channelPrefix,
           entity: entity,
-          open: open,
+          open: open == 'click' && clickLabel.isNotEmpty ? 'click' : 'tap',
           clickLabel: clickLabel,
         ),
       );
