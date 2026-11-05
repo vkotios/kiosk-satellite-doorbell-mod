@@ -103,7 +103,7 @@ The Doorbell tab of the Remote Admin UI turns the feature on, sets the return ti
 
 Kiosk Satellite looks at the app and channel of each notification to see whether it belongs to a saved doorbell. It reads a notification's title only when it does, or while a capture waits. Every other notification is dropped without its content being read, stored or reported. With the switch off no doorbell is matched, so no title is read.
 
-The Doorbell click service listens only to the saved doorbell apps. It reads the app's screen only while it looks for the card, and only while you teach one. It never reads, stores or sends anything but the card's label that you saved, and it does nothing in other apps. Only the tablet can start teaching, and the remote API cannot call openAppAndClick: an app is opened and its card tapped by the kiosk itself or not at all.
+The Doorbell click service listens only to the saved doorbell apps. It reads the app's screen only while it looks for the card, and only while you teach one. It never reads, stores or sends anything but the card's label that you saved, and it does nothing in other apps. The click service acts only in the apps of saved doorbells and only on the card label saved with each; the remote API cannot start a teach or call openAppAndClick directly, but whoever holds the remote admin token can save a doorbell, so keep that token as private as the kiosk's other admin rights.
 
 What is kept is what you saved: the name, the app's package, the channel prefix, the ringing sensor and the card's label. A ring itself is told to Home Assistant and, through the broadcast, to any app on the device that listens for it, with the ring's title, the saved name, whether it opened, what rang it and how it opens.
 

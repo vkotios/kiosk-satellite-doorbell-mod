@@ -737,9 +737,10 @@ export function settingRow(s) {
     let busy = false;
     const setBusy = (on) => { busy = on; controls.querySelectorAll('button').forEach((b) => { b.disabled = on; }); };
     // One command at a time. Returns true when it worked, the error
-    // message when it did not (the form shows it), false while busy.
+    // message when it did not (the form shows it), and a busy message
+    // while another change still runs.
     const run = async (command, body) => {
-      if (busy) return false;
+      if (busy) return 'Another change is still running. Try again in a moment.';
       setBusy(true);
       try {
         const res = await api(`/api/commands/${command}`, { method: 'POST', body: JSON.stringify(body) });
