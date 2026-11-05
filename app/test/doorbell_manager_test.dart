@@ -66,6 +66,10 @@ void main() {
       '[{"id":"ring","label":"Ring","package":"com.ring",'
       '"entity":"binary_sensor.front_door_ringing",'
       '"clickLabel":"Front door"}]';
+  const savedEntityAndNotification =
+      '[{"id":"both","label":"Both","package":"com.both",'
+      '"channelPrefix":"com.both.ring",'
+      '"entity":"binary_sensor.both","clickLabel":"Front door"}]';
 
   Future<void> build(
     Map<String, Object> initial, {
@@ -320,6 +324,17 @@ void main() {
       });
     });
 
+    test('configureClick carries a tap doorbell with a click label, for '
+        'its fallback and test open', () async {
+      await build({
+        'ks.doorbell.enabled': true,
+        'ks.doorbell.signatures': savedTapEufyWithClick,
+      });
+      expect(configureClickPushes().single, {
+        'packages': ['com.oceanwing.battery.cam'],
+      });
+    });
+
     test('configureClick is empty while the setting is off', () async {
       await build({
         'ks.doorbell.enabled': false,
@@ -513,6 +528,92 @@ void main() {
       expect(haEvents.single.data['open'], 'tap');
     });
 
+    test('is ignored while a camera is being taught', () async {
+      await build({'ks.doorbell.enabled': true});
+      doorbell.clickCapturing.value = true;
+      await ring(title: 'Front door');
+      expect(stubCalls, isEmpty);
+      await pumpEventQueue();
+      expect(haEvents, isEmpty);
+    });
+
+    test('for a doorbell an entity also rings is ignored right after an '
+        'entity open, and rings once the window passed', () async {
+      await build({
+        'ks.doorbell.enabled': true,
+        'ks.doorbell.signatures': savedEntityAndNotification,
+      });
+      var now = DateTime(2024, 1, 1);
+      doorbell.clock = () => now;
+      await doorbell.ringFromEntity('both');
+      await pumpEventQueue();
+      expect(haEvents, hasLength(1));
+      await ring(
+        package: 'com.both',
+        title: 'Someone at the door',
+        signatureId: 'both',
+      );
+      await pumpEventQueue();
+      expect(haEvents, hasLength(1));
+      expect(stubNames(), ['screenOn', 'openAppAndClick']);
+      now = now.add(const Duration(seconds: 29));
+      await ring(
+        package: 'com.both',
+        title: 'Someone at the door',
+        signatureId: 'both',
+      );
+      await pumpEventQueue();
+      expect(haEvents, hasLength(2));
+      expect(stubNames(), [
+        'screenOn',
+        'openAppAndClick',
+        'screenOn',
+        'openNotificationAction',
+      ]);
+    });
+
+    test('for a doorbell no entity rings opens twice in a row', () async {
+      await build({
+        'ks.doorbell.enabled': true,
+        'ks.doorbell.signatures': savedClickEufy,
+      });
+      var now = DateTime(2024, 1, 1);
+      doorbell.clock = () => now;
+      await ring(title: 'Someone at the door', signatureId: 'eufy');
+      await pumpEventQueue();
+      now = now.add(const Duration(seconds: 2));
+      await ring(title: 'Someone at the door', signatureId: 'eufy');
+      await pumpEventQueue();
+      expect(stubNames(), [
+        'screenOn',
+        'openAppAndClick',
+        'screenOn',
+        'openAppAndClick',
+      ]);
+      expect(haEvents, hasLength(2));
+    });
+
+    test('a click open returns after the click wait, not before', () async {
+      await build({
+        'ks.doorbell.enabled': true,
+        'ks.doorbell.return_seconds': 10,
+        'ks.doorbell.signatures': savedClickEufy,
+      });
+      await ring(title: 'Someone at the door', signatureId: 'eufy');
+      expect(stubParams('openAppAndClick'), {
+        'package': 'com.oceanwing.battery.cam',
+        'label': 'Front door',
+        'delaySeconds': 8,
+        'returnAfterSeconds': 33,
+      });
+      await build({
+        'ks.doorbell.enabled': true,
+        'ks.doorbell.signatures': savedClickEufy,
+      });
+      await ring(title: 'Someone at the door', signatureId: 'eufy');
+      expect(stubParams('openAppAndClick')['returnAfterSeconds'], 75);
+    });
+
     test('does nothing without a notification key', () async {
       await build({'ks.doorbell.enabled': true});
       await ring(key: '');
@@ -582,8 +683,8 @@ void main() {
       expect(haEvents.single.data['trigger'], 'entity');
     });
 
-    test('ignores a second ring within 20 s and accepts a later one',
-        () async {
+    test('ignores a second ring within the dedupe window and accepts a '
+        'later one', () async {
       await build({
         'ks.doorbell.enabled': true,
         'ks.doorbell.signatures': savedEntityDoorbell,
@@ -597,10 +698,50 @@ void main() {
       await doorbell.ringFromEntity('ring');
       await pumpEventQueue();
       expect(haEvents, hasLength(1));
-      now = now.add(const Duration(seconds: 2));
+      now = now.add(const Duration(seconds: 10));
       await doorbell.ringFromEntity('ring');
       await pumpEventQueue();
       expect(haEvents, hasLength(2));
+    });
+
+    test('the dedupe window covers the click wait: delay 30 makes it '
+        '50 s', () async {
+      await build({
+        'ks.doorbell.enabled': true,
+        'ks.doorbell.click_delay_seconds': 30,
+        'ks.doorbell.signatures': savedEntityDoorbell,
+      });
+      var now = DateTime(2024, 1, 1);
+      doorbell.clock = () => now;
+      await doorbell.ringFromEntity('ring');
+      await pumpEventQueue();
+      expect(haEvents, hasLength(1));
+      now = now.add(const Duration(seconds: 40));
+      await doorbell.ringFromEntity('ring');
+      await pumpEventQueue();
+      expect(haEvents, hasLength(1));
+      now = now.add(const Duration(seconds: 11));
+      await doorbell.ringFromEntity('ring');
+      await pumpEventQueue();
+      expect(haEvents, hasLength(2));
+    });
+
+    test('is ignored while a camera is being taught, without starting '
+        'the window', () async {
+      await build({
+        'ks.doorbell.enabled': true,
+        'ks.doorbell.signatures': savedEntityDoorbell,
+      });
+      doorbell.clickCapturing.value = true;
+      await doorbell.ringFromEntity('ring');
+      expect(stubCalls, isEmpty);
+      await pumpEventQueue();
+      expect(haEvents, isEmpty);
+      doorbell.clickCapturing.value = false;
+      await doorbell.ringFromEntity('ring');
+      expect(stubNames(), ['screenOn', 'openAppAndClick']);
+      await pumpEventQueue();
+      expect(haEvents, hasLength(1));
     });
 
     test('does nothing for an unknown id or a doorbell without an entity',
@@ -675,6 +816,41 @@ void main() {
         'event_type': 'click_failed',
         'doorbell': 'Unknown card',
         'label': 'Unknown card',
+        'reason': 'not_found',
+      });
+    });
+
+    test('is matched by package and label when two doorbells share a '
+        'click label', () async {
+      await build({
+        'ks.doorbell.enabled': true,
+        'ks.doorbell.signatures':
+            '[{"id":"ring","label":"Ring","package":"com.ring",'
+            '"channelPrefix":"com.ring.ring","open":"click",'
+            '"clickLabel":"Front door"},'
+            '{"id":"eufy","label":"Eufy Security",'
+            '"package":"com.oceanwing.battery.cam",'
+            '"channelPrefix":"com.ocean.battery.cam.ring",'
+            '"open":"click","clickLabel":"Front door"}]',
+      });
+      await ring(
+        package: 'com.ring',
+        title: 'Someone at the door',
+        signatureId: 'ring',
+      );
+      await pumpEventQueue();
+      await ring(title: 'Someone at the door', signatureId: 'eufy');
+      await pumpEventQueue();
+      await fromNative('clickResult', {
+        'package': 'com.ring',
+        'label': 'Front door',
+        'result': 'not_found',
+      });
+      await pumpEventQueue();
+      expect(haEvents.last.data, {
+        'event_type': 'click_failed',
+        'doorbell': 'Ring',
+        'label': 'Front door',
         'reason': 'not_found',
       });
     });

@@ -295,15 +295,17 @@ class KioskManager extends Manager with WidgetsBindingObserver {
         name: 'openAppAndClick',
         description:
             'Open another Android app fresh, wait, and tap the card whose '
-            'label matches: used by a doorbell ring. Unpins first like '
-            'launchApp. Fails when the app is not installed or Android '
-            'refuses.',
+            'label matches: the kiosk itself calls it for a doorbell '
+            'ring, remote callers are refused. Unpins first like '
+            'launchApp. Needs Doorbell click access. Fails when the app '
+            'is not installed or Android refuses.',
         params: const {
           'package': 'Android package of the doorbell app',
           'label': 'The label of the card to tap',
           'delaySeconds':
-              'Seconds to wait after the app opens before looking for the '
-              'card',
+              'Seconds to wait after the app opens before looking for '
+              'the card, default 8, clamped to 0..120; the search window '
+              'is fixed at 15 seconds',
           'returnAfterSeconds':
               'Idle seconds before the kiosk comes back; omit to use the '
               "launcher's own return",
