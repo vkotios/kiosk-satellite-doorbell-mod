@@ -2717,7 +2717,10 @@ class _CategoryContentState extends State<_CategoryContent> {
           SearchLandingTarget(
             id: 'x:doorbell_permissions',
             child: SettingsCard(
-              children: [_DoorbellPermissionsTile(container: container)],
+              children: [
+                _DoorbellPermissionsTile(container: container),
+                _DoorbellClickAccessTile(container: container),
+              ],
             ),
           ),
         ],
@@ -5218,6 +5221,97 @@ class _DoorbellPermissionsTileState extends State<_DoorbellPermissionsTile>
                 await _refresh();
               },
               child: const Text('Grant'),
+            ),
+    );
+  }
+}
+
+/// The Doorbell page's click access: the Accessibility grant a
+/// doorbell that opens by a tap on its card needs, in the
+/// permissions tile's shape.
+class _DoorbellClickAccessTile extends StatefulWidget {
+  const _DoorbellClickAccessTile({required this.container});
+
+  final AppContainer container;
+
+  @override
+  State<_DoorbellClickAccessTile> createState() =>
+      _DoorbellClickAccessTileState();
+}
+
+class _DoorbellClickAccessTileState extends State<_DoorbellClickAccessTile>
+    with WidgetsBindingObserver {
+  bool? _running;
+
+  @override
+  void initState() {
+    super.initState();
+    WidgetsBinding.instance.addObserver(this);
+    _refresh();
+  }
+
+  @override
+  void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
+    super.dispose();
+  }
+
+  final _returned = ReturnWatch();
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    // The service is turned on on an OS screen that reports nothing
+    // back.
+    if (_returned.returned(state)) _refresh();
+  }
+
+  Future<void> _refresh() async {
+    final result = await widget.container.commands.execute(
+      'doorbellClickAccess',
+      const {},
+    );
+    if (!mounted) return;
+    if (!result.ok) {
+      setState(() => _running = null);
+      return;
+    }
+    final data = result.data;
+    setState(() => _running = data is Map && data['running'] == true);
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final running = _running;
+    return SettingsRow(
+      leading: Icon(
+        running == true
+            ? Icons.check_circle_outline
+            : Icons.touch_app_outlined,
+        color: running == true ? null : theme.colorScheme.error,
+      ),
+      title: const Text('Doorbell click access'),
+      subtitle: Text(
+        running == true
+            ? 'Kiosk Satellite can tap your doorbell camera. It reads '
+                'the doorbell app\'s screen only while it taps, and does '
+                'nothing in any other app.'
+            : 'Without this Kiosk Satellite cannot tap the camera, so a '
+                'doorbell that rings by a Home Assistant sensor cannot '
+                'open. Turn it on in Android Accessibility settings '
+                '(find Kiosk Satellite there).',
+      ),
+      trailing: running == true
+          ? null
+          : TextButton(
+              onPressed: () async {
+                await widget.container.commands.execute(
+                  'doorbellOpenClickSettings',
+                  const {},
+                );
+                await _refresh();
+              },
+              child: const Text('Open'),
             ),
     );
   }

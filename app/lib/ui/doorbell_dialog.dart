@@ -7,13 +7,16 @@ import '../core/command_registry.dart';
 import '../managers/doorbell/doorbell_signature.dart';
 import '../managers/doorbell/doorbell_manager.dart' show DoorbellCapture;
 import '../managers/settings/definitions.dart' show doorbellEnabled;
+import 'doorbell_click_dialog.dart';
 import 'toast.dart';
 
-/// The Doorbell page: the saved doorbells, each with a Remove, a
-/// one-tap Add Eufy Security below the list, and the capture that
-/// waits for another doorbell's ring notification and saves it as
-/// one more doorbell. The list is the manager's, read and changed
-/// through its commands so the native listener stays in step.
+/// The Doorbell page: the saved doorbells, each with a Remove and
+/// a Test open, a one-tap Add Eufy Security below the list, the
+/// capture that waits for another doorbell's ring notification and
+/// saves it as one more doorbell, and the camera doorbell wizard
+/// that saves one that opens by a tap on its card. The list is the
+/// manager's, read and changed through its commands so the native
+/// listener stays in step.
 Future<void> showDoorbellDialog(
   BuildContext context,
   AppContainer container,
@@ -111,6 +114,23 @@ Future<void> showDoorbellDialog(
     await reload(dialogContext, setState);
   }
 
+  // Open one saved doorbell the way a ring would, to check that
+  // it still opens.
+  Future<void> testOpen(
+    BuildContext dialogContext,
+    StateSetter setState,
+    String id,
+  ) async {
+    final result = await runCommand(
+      dialogContext,
+      setState,
+      'doorbellTestOpen',
+      {'id': id},
+    );
+    if (result == null || result.ok || !dialogContext.mounted) return;
+    _toastFailure(dialogContext, result.error);
+  }
+
   // Save the Eufy Security app, the doorbell this feature was built
   // against, then reload the list to match.
   Future<void> addEufy(
@@ -132,6 +152,17 @@ Future<void> showDoorbellDialog(
       _toastFailure(dialogContext, result.error);
       return;
     }
+    await reload(dialogContext, setState);
+  }
+
+  // Run the camera doorbell wizard, then reload the list when it
+  // saved one.
+  Future<void> addCameraDoorbell(
+    BuildContext dialogContext,
+    StateSetter setState,
+  ) async {
+    final saved = await showDoorbellClickDialog(dialogContext, container);
+    if (!saved || !dialogContext.mounted) return;
     await reload(dialogContext, setState);
   }
 
@@ -238,6 +269,50 @@ Future<void> showDoorbellDialog(
                   nameController.text = caught.appLabel;
                 }
                 if (caught == null) namedFor = null;
+                // One saved doorbell's row: what it rings and what
+                // opens, a Test open for one that opens by a click,
+                // and the Remove.
+                Widget row(Map signature) {
+                  final clickLabel = '${signature['clickLabel'] ?? ''}'.trim();
+                  return ListTile(
+                    title: Text(
+                      '${signature['label'] ?? signature['id'] ?? ''}',
+                    ),
+                    subtitle: Text(_ringSubtitle(signature), style: small),
+                    trailing: Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        if (clickLabel.isNotEmpty)
+                          IconButton(
+                            tooltip: 'Test open',
+                            icon: const Icon(Icons.play_arrow_outlined),
+                            onPressed: busy
+                                ? null
+                                : () => unawaited(
+                                      testOpen(
+                                        context,
+                                        setState,
+                                        '${signature['id']}',
+                                      ),
+                                    ),
+                          ),
+                        IconButton(
+                          tooltip: 'Remove',
+                          icon: const Icon(Icons.delete_outline),
+                          onPressed: busy
+                              ? null
+                              : () => unawaited(
+                                    remove(
+                                      context,
+                                      setState,
+                                      '${signature['id']}',
+                                    ),
+                                  ),
+                        ),
+                      ],
+                    ),
+                  );
+                }
                 return ListView(
                   shrinkWrap: true,
                   children: [
@@ -352,25 +427,7 @@ Future<void> showDoorbellDialog(
                           padding: EdgeInsets.symmetric(vertical: 12),
                           child: Text('No doorbell saved yet.'),
                         ),
-                      for (final signature in signatures)
-                        ListTile(
-                          title: Text(
-                            '${signature['label'] ?? signature['id'] ?? ''}',
-                          ),
-                          trailing: IconButton(
-                            tooltip: 'Remove',
-                            icon: const Icon(Icons.delete_outline),
-                            onPressed: busy
-                                ? null
-                                : () => unawaited(
-                                      remove(
-                                        context,
-                                        setState,
-                                        '${signature['id']}',
-                                      ),
-                                    ),
-                          ),
-                        ),
+                      for (final signature in signatures) row(signature),
                       if (!hasEufy)
                         TextButton(
                           onPressed: busy
@@ -378,6 +435,14 @@ Future<void> showDoorbellDialog(
                               : () => unawaited(addEufy(context, setState)),
                           child: const Text('Add Eufy Security'),
                         ),
+                      TextButton(
+                        onPressed: busy || !enabled
+                            ? null
+                            : () => unawaited(
+                                addCameraDoorbell(context, setState),
+                              ),
+                        child: const Text('Add a camera doorbell'),
+                      ),
                       TextButton(
                         onPressed: busy || !enabled
                             ? null
@@ -426,6 +491,24 @@ Future<void> showDoorbellDialog(
     await runCommand(null, null, 'doorbellStopCapture', const {});
   }
   container.doorbell.captured.value = null;
+}
+
+/// What one saved doorbell's row says it rings and opens. A key
+/// an old save lacks reads as empty, never as 'null'.
+String _ringSubtitle(Map signature) {
+  final channel = '${signature['channelPrefix'] ?? ''}'.trim();
+  final entity = '${signature['entity'] ?? ''}'.trim();
+  final clickLabel = '${signature['clickLabel'] ?? ''}'.trim();
+  final opensByClick = '${signature['open'] ?? ''}'.trim() == 'click';
+  if (channel.isEmpty && entity.isEmpty) return 'Rings: nothing yet';
+  final rings = [
+    if (channel.isNotEmpty) 'a notification',
+    if (entity.isNotEmpty) entity,
+  ].join(' and ');
+  final opens = opensByClick && clickLabel.isNotEmpty
+      ? 'the "$clickLabel" card'
+      : 'its notification tap';
+  return 'Rings: $rings. Opens: $opens';
 }
 
 /// A doorbell command that did not go through, told the way the
