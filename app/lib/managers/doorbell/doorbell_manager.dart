@@ -90,6 +90,11 @@ class DoorbellManager extends Manager {
   /// click result can name the doorbell.
   final Map<String, String> _clickRings = {};
 
+  /// The future of the last open by click: a click result the native
+  /// side pushes from inside the launch call awaits it, so its
+  /// click_failed event lands after the ringing event of that open.
+  Future<void>? _opening;
+
   /// The window a ring of a doorbell is ignored over after it opened:
   /// never shorter than the old 20 seconds, and always long enough to
   /// cover the click wait: the delay, the 15 second search window and
@@ -186,8 +191,10 @@ class DoorbellManager extends Manager {
           if (rawEntity.isNotEmpty && entity.isEmpty) {
             return const CommandResult.fail(_badEntity);
           }
-          final open =
+          var open =
               '${p['open'] ?? ''}'.trim() == 'click' ? 'click' : 'tap';
+          // A Home Assistant ring always opens by click.
+          if (entity.isNotEmpty) open = 'click';
           final clickLabel = '${p['clickLabel'] ?? ''}'.trim();
           final signatures = _signatures;
           final signature = DoorbellSignature(
@@ -271,6 +278,8 @@ class DoorbellManager extends Manager {
               return const CommandResult.fail(_badEntity);
             }
           }
+          // A Home Assistant ring always opens by click.
+          if (entity.isNotEmpty) open = 'click';
           final merged = DoorbellSignature(
             id: saved.id,
             label: field('label', saved.label),
@@ -388,6 +397,11 @@ class DoorbellManager extends Manager {
               'this doorbell has no click label',
             );
           }
+          if (clickCapturing.value) {
+            return const CommandResult.fail(
+              'a camera is being taught, try again when it ends',
+            );
+          }
           await commands.execute('screenOn', const {});
           return _openByClick(saved);
         },
@@ -433,6 +447,19 @@ class DoorbellManager extends Manager {
           final result = '${args['result'] ?? ''}';
           log.info(name, "click '$label': $result");
           if (result != 'clicked') {
+            // A result the native side pushes from inside the launch
+            // call would land before the ringing event of that open:
+            // wait for the open, then a turn, so the ringing publish
+            // runs first.
+            final opening = _opening;
+            if (opening != null) {
+              try {
+                await opening;
+              } catch (e) {
+                log.warn(name, 'could not wait for the open: $e');
+              }
+              await Future<void>.delayed(Duration.zero);
+            }
             // The click is matched by package and label: two doorbells
             // can share a click label.
             final key = package.isEmpty ? label : '$package\n$label';
@@ -444,8 +471,14 @@ class DoorbellManager extends Manager {
             }));
           }
         } else if (call.method == 'clickCaptureEnded') {
-          log.info(name, "click capture ended: ${args['reason'] ?? ''}");
+          final reason = '${args['reason'] ?? ''}';
+          log.info(name, "click capture ended: $reason");
           _setClickCapturing(false);
+          // The kiosk went to the background for the teach; a caught
+          // card already brings it back, and so does any other end.
+          if (reason != 'caught') {
+            unawaited(commands.execute('bringToFront', const {}));
+          }
         }
       }
       return null;
@@ -523,7 +556,8 @@ class DoorbellManager extends Manager {
 
   /// Stop a running click capture: tell the native side and clear the
   /// flag whether or not that worked, since the capture is over
-  /// either way. The stop command and the setting-off listener both
+  /// either way, and bring the kiosk back from the doorbell app the
+  /// teach opened. The stop command and the setting-off listener both
   /// come here.
   Future<void> _stopClickCapture() async {
     try {
@@ -532,6 +566,9 @@ class DoorbellManager extends Manager {
       log.warn(name, 'could not stop the click capture: $e');
     }
     _setClickCapturing(false);
+    // The kiosk went to the background for the teach; come back now
+    // it ended.
+    unawaited(commands.execute('bringToFront', const {}));
   }
 
   /// Tell the native listener which doorbells to answer: the saved
@@ -702,30 +739,39 @@ class DoorbellManager extends Manager {
   /// card, remembering the click so a later click result can name the
   /// doorbell it opened. The kiosk comes back after the doorbell return
   /// setting, but never before the click could land: the delay plus the
-  /// 15 second search window plus a margin.
+  /// 15 second search window plus a margin. The run also completes
+  /// [_opening], which a click result pushed from inside the launch
+  /// call awaits, so the click_failed event lands after the ringing
+  /// one.
   Future<CommandResult> _openByClick(DoorbellSignature s) async {
-    final delay = _settings.get(defs.doorbellClickDelaySeconds).toInt();
-    var returnAfter = _settings.get(defs.doorbellReturnSeconds).toInt();
-    final clickWait = delay + 15 + 10;
-    if (returnAfter < clickWait) returnAfter = clickWait;
-    _clickRings['${s.package}\n${s.clickLabel}'] = s.label;
-    log.info(
-      name,
-      "doorbell '${s.label}': opening by click, tap after ${delay}s",
-    );
-    final result = await commands.execute('openAppAndClick', {
-      'package': s.package,
-      'label': s.clickLabel,
-      'delaySeconds': delay,
-      'returnAfterSeconds': returnAfter,
-    });
-    if (!result.ok) {
-      log.warn(
+    final opening = Completer<void>();
+    _opening = opening.future;
+    try {
+      final delay = _settings.get(defs.doorbellClickDelaySeconds).toInt();
+      var returnAfter = _settings.get(defs.doorbellReturnSeconds).toInt();
+      final clickWait = delay + 15 + 10;
+      if (returnAfter < clickWait) returnAfter = clickWait;
+      _clickRings['${s.package}\n${s.clickLabel}'] = s.label;
+      log.info(
         name,
-        "doorbell '${s.label}' not opened by click: ${result.error}",
+        "doorbell '${s.label}': opening by click, tap after ${delay}s",
       );
+      final result = await commands.execute('openAppAndClick', {
+        'package': s.package,
+        'label': s.clickLabel,
+        'delaySeconds': delay,
+        'returnAfterSeconds': returnAfter,
+      });
+      if (!result.ok) {
+        log.warn(
+          name,
+          "doorbell '${s.label}' not opened by click: ${result.error}",
+        );
+      }
+      return result;
+    } finally {
+      opening.complete();
     }
-    return result;
   }
 
   Future<void> _onRing({

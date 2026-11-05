@@ -136,6 +136,14 @@ void main() {
       expect(decoded.single.entity, 'binary_sensor.x');
     });
 
+    test('an entity doorbell opens by click whatever was saved', () {
+      final decoded = decodeDoorbellSignatures(
+        '[{"id":"a","package":"com.a","entity":"binary_sensor.a",'
+        '"open":"tap","clickLabel":"A"}]',
+      );
+      expect(decoded.single.open, 'click');
+    });
+
     test('keeps both triggers together and a click-open doorbell', () {
       final decoded = decodeDoorbellSignatures(
         '[{"id":"a","label":"A","package":"com.a",'
@@ -147,7 +155,7 @@ void main() {
       expect(decoded, hasLength(2));
       expect(decoded[0].rungByNotification, isTrue);
       expect(decoded[0].rungByEntity, isTrue);
-      expect(decoded[0].opensByClick, isFalse);
+      expect(decoded[0].opensByClick, isTrue);
       expect(decoded[1].rungByNotification, isTrue);
       expect(decoded[1].rungByEntity, isFalse);
       expect(decoded[1].opensByClick, isTrue);
