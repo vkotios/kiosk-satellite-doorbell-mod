@@ -71,12 +71,31 @@ void main() {
       '[{"id":"both","label":"Both","package":"com.both",'
       '"channelPrefix":"com.both.ring",'
       '"entity":"binary_sensor.both","clickLabel":"Front door"}]';
+  const savedBothTriggersTap =
+      '[{"id":"both","label":"Both","package":"com.both",'
+      '"channelPrefix":"com.both.ring",'
+      '"entity":"binary_sensor.both","open":"tap",'
+      '"clickLabel":"Front door"}]';
+
+  /// The native side reports something, the way the platform would.
+  Future<void> fromNative(String method, Map<String, Object?> args) async {
+    await messenger.handlePlatformMessage(
+      channel.name,
+      const StandardMethodCodec().encodeMethodCall(MethodCall(method, args)),
+      (data) {
+        if (data != null) {
+          const StandardMethodCodec().decodeEnvelope(data);
+        }
+      },
+    );
+  }
 
   Future<void> build(
     Map<String, Object> initial, {
     Object? error,
     bool openNotificationFails = false,
     bool openClickFails = false,
+    bool serviceOffDuringOpen = false,
   }) async {
     SharedPreferences.setMockInitialValues(initial);
     bus = EventBus();
@@ -134,6 +153,15 @@ void main() {
         description: 'stub',
         handler: (params) async {
           stubCalls.add(('openAppAndClick', params));
+          if (serviceOffDuringOpen) {
+            // The native side pushes a service_off click result from
+            // inside the launch call, before the open returns.
+            unawaited(fromNative('clickResult', {
+              'package': params['package'],
+              'label': params['label'],
+              'result': 'service_off',
+            }));
+          }
           return clickOpenFails
               ? const CommandResult.fail('x')
               : const CommandResult.ok();
@@ -178,19 +206,6 @@ void main() {
 
   Future<CommandResult> run(String name, [Map<String, Object?>? params]) =>
       doorbell.commands.execute(name, params ?? const {});
-
-  /// The native side reports something, the way the platform would.
-  Future<void> fromNative(String method, Map<String, Object?> args) async {
-    await messenger.handlePlatformMessage(
-      channel.name,
-      const StandardMethodCodec().encodeMethodCall(MethodCall(method, args)),
-      (data) {
-        if (data != null) {
-          const StandardMethodCodec().decodeEnvelope(data);
-        }
-      },
-    );
-  }
 
   Future<void> ring({
     String package = 'com.oceanwing.battery.cam',
@@ -569,7 +584,39 @@ void main() {
         'screenOn',
         'openAppAndClick',
         'screenOn',
-        'openNotificationAction',
+        'openAppAndClick',
+      ]);
+    });
+
+    test('for a doorbell an entity also rings, a notification open holds '
+        'the entity ring off until the window passes', () async {
+      await build({
+        'ks.doorbell.enabled': true,
+        'ks.doorbell.signatures': savedBothTriggersTap,
+      });
+      var now = DateTime(2024, 1, 1);
+      doorbell.clock = () => now;
+      await ring(
+        package: 'com.both',
+        title: 'Someone at the door',
+        signatureId: 'both',
+      );
+      await pumpEventQueue();
+      // The saved 'tap' gives way: an entity doorbell opens by click.
+      expect(stubNames(), ['screenOn', 'openAppAndClick']);
+      await doorbell.ringFromEntity('both');
+      await pumpEventQueue();
+      expect(stubNames(), ['screenOn', 'openAppAndClick']);
+      expect(haEvents, hasLength(1));
+      now = now.add(const Duration(seconds: 29));
+      await doorbell.ringFromEntity('both');
+      await pumpEventQueue();
+      expect(haEvents, hasLength(2));
+      expect(stubNames(), [
+        'screenOn',
+        'openAppAndClick',
+        'screenOn',
+        'openAppAndClick',
       ]);
     });
 
@@ -786,6 +833,29 @@ void main() {
       expect(haEvents, hasLength(4));
     });
 
+    test('a service_off pushed from inside the launch lands after the '
+        'ringing event', () async {
+      await build(
+        {
+          'ks.doorbell.enabled': true,
+          'ks.doorbell.signatures': savedClickEufy,
+        },
+        serviceOffDuringOpen: true,
+      );
+      await ring(title: 'Someone at the door', signatureId: 'eufy');
+      await pumpEventQueue();
+      expect(
+        [for (final event in haEvents) event.data['event_type']],
+        ['ringing', 'click_failed'],
+      );
+      expect(haEvents.last.data, {
+        'event_type': 'click_failed',
+        'doorbell': 'Eufy Security',
+        'label': 'Front door',
+        'reason': 'service_off',
+      });
+    });
+
     test('a clicked result publishes nothing', () async {
       await build({
         'ks.doorbell.enabled': true,
@@ -918,6 +988,19 @@ void main() {
       final result = await run('doorbellTestOpen', {'id': 'eufy'});
       expect(result.ok, isFalse);
       expect(result.error, 'this doorbell has no click label');
+      expect(stubCalls, isEmpty);
+    });
+
+    test('fails while a camera is being taught', () async {
+      await build({
+        'ks.doorbell.enabled': true,
+        'ks.doorbell.signatures': savedClickEufy,
+      });
+      doorbell.clickCapturing.value = true;
+      final result = await run('doorbellTestOpen', {'id': 'eufy'});
+      expect(result.ok, isFalse);
+      expect(result.error,
+          'a camera is being taught, try again when it ends');
       expect(stubCalls, isEmpty);
     });
   });
@@ -1100,6 +1183,26 @@ void main() {
       expect(result.error,
           'a doorbell needs a notification channel or a Home Assistant '
           'entity');
+    });
+
+    test('doorbellAddSignature with an entity saves open click', () async {
+      await build({});
+      final result = await run('doorbellAddSignature', {
+        'label': 'Ring',
+        'package': 'com.ring',
+        'entity': 'binary_sensor.front_door_ringing',
+        'clickLabel': 'Front door',
+      });
+      expect(result.ok, isTrue);
+      expect(result.data, {
+        'id': 'ring',
+        'label': 'Ring',
+        'package': 'com.ring',
+        'channelPrefix': '',
+        'entity': 'binary_sensor.front_door_ringing',
+        'open': 'click',
+        'clickLabel': 'Front door',
+      });
     });
 
     test('doorbellAddSignature saves a click doorbell with an entity',
@@ -1287,6 +1390,26 @@ void main() {
         'label': 'Eufy',
         'package': 'com.eufy',
         'channelPrefix': 'pre',
+        'open': 'click',
+        'clickLabel': 'Front door',
+      });
+    });
+
+    test('doorbellUpdateSignature setting an entity opens by click',
+        () async {
+      await build({'ks.doorbell.signatures': savedTapEufyWithClick});
+      final result = await run('doorbellUpdateSignature', {
+        'id': 'eufy',
+        'entity': 'binary_sensor.front_door',
+      });
+      expect(result.ok, isTrue);
+      expect(result.data, {
+        'id': 'eufy',
+        'label': 'Eufy Security',
+        'package': 'com.oceanwing.battery.cam',
+        'channelPrefix': 'com.ocean.battery.cam.ring',
+        'entity': 'binary_sensor.front_door',
+        'open': 'click',
         'clickLabel': 'Front door',
       });
     });
@@ -1462,6 +1585,44 @@ void main() {
       await pumpEventQueue();
       expect(stubNames(), ['bringToFront']);
       expect(stubParams('bringToFront'), equals(<String, Object?>{}));
+    });
+
+    test('a teach that ends by timeout brings the kiosk back', () async {
+      await build({'ks.doorbell.enabled': true});
+      await run('doorbellStartClickCapture', {'package': 'com.ring'});
+      await fromNative('clickCaptureEnded', {'reason': 'timeout'});
+      await pumpEventQueue();
+      expect(doorbell.clickCapturing.value, isFalse);
+      expect(stubNames(), ['bringToFront']);
+    });
+
+    test('a teach that ends stopped brings the kiosk back', () async {
+      await build({'ks.doorbell.enabled': true});
+      await run('doorbellStartClickCapture', {'package': 'com.ring'});
+      await fromNative('clickCaptureEnded', {'reason': 'stopped'});
+      await pumpEventQueue();
+      expect(stubNames(), ['bringToFront']);
+    });
+
+    test('a teach that ends caught brings the kiosk back only once',
+        () async {
+      await build({'ks.doorbell.enabled': true});
+      await run('doorbellStartClickCapture', {'package': 'com.ring'});
+      await fromNative('clickCaptured', {
+        'package': 'com.ring',
+        'label': 'Front door',
+      });
+      await fromNative('clickCaptureEnded', {'reason': 'caught'});
+      await pumpEventQueue();
+      expect(stubNames(), ['bringToFront']);
+    });
+
+    test('stopping a teach brings the kiosk back', () async {
+      await build({'ks.doorbell.enabled': true});
+      await run('doorbellStartClickCapture', {'package': 'com.ring'});
+      await run('doorbellStopClickCapture');
+      await pumpEventQueue();
+      expect(stubNames(), ['bringToFront']);
     });
 
     test('ends when the native side says so', () async {

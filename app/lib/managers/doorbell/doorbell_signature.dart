@@ -85,9 +85,11 @@ String? normalizeDoorbellEntity(String raw) {
 /// Assistant ring could not open (an entity without a clickLabel), and
 /// one only a click could open (a click open without a clickLabel and
 /// no channelPrefix). A missing or empty label falls back to the
-/// package, 'open' is 'click' only when stored as exactly that and
-/// taught a clickLabel (a notification doorbell without one opens by
-/// the tap), and the first of two entries sharing an id wins.
+/// package, 'open' is 'click' whenever a Home Assistant entity rings
+/// the doorbell, whatever was saved, and otherwise only when stored
+/// as exactly that and taught a clickLabel (a notification doorbell
+/// without one opens by the tap), and the first of two entries
+/// sharing an id wins.
 List<DoorbellSignature> decodeDoorbellSignatures(String json) {
   try {
     final raw = jsonDecode(json);
@@ -121,7 +123,11 @@ List<DoorbellSignature> decodeDoorbellSignatures(String json) {
           package: package,
           channelPrefix: channelPrefix,
           entity: entity,
-          open: open == 'click' && clickLabel.isNotEmpty ? 'click' : 'tap',
+          // A Home Assistant ring always opens by click, whatever was
+          // saved; an entity doorbell has a clickLabel or was dropped.
+          open: entity.isNotEmpty || (open == 'click' && clickLabel.isNotEmpty)
+              ? 'click'
+              : 'tap',
           clickLabel: clickLabel,
         ),
       );
