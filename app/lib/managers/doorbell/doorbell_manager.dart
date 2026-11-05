@@ -181,7 +181,11 @@ class DoorbellManager extends Manager {
           final label = '${p['label'] ?? ''}'.trim();
           final package = '${p['package'] ?? ''}'.trim();
           final channelPrefix = '${p['channelPrefix'] ?? ''}'.trim();
-          final entity = '${p['entity'] ?? ''}'.trim();
+          final rawEntity = '${p['entity'] ?? ''}'.trim();
+          final entity = normalizeDoorbellEntity(rawEntity) ?? '';
+          if (rawEntity.isNotEmpty && entity.isEmpty) {
+            return const CommandResult.fail(_badEntity);
+          }
           final open =
               '${p['open'] ?? ''}'.trim() == 'click' ? 'click' : 'tap';
           final clickLabel = '${p['clickLabel'] ?? ''}'.trim();
@@ -259,12 +263,20 @@ class DoorbellManager extends Manager {
           if (p.containsKey('open')) {
             open = '${p['open'] ?? ''}'.trim() == 'click' ? 'click' : 'tap';
           }
+          var entity = saved.entity;
+          if (p.containsKey('entity')) {
+            final rawEntity = '${p['entity'] ?? ''}'.trim();
+            entity = normalizeDoorbellEntity(rawEntity) ?? '';
+            if (rawEntity.isNotEmpty && entity.isEmpty) {
+              return const CommandResult.fail(_badEntity);
+            }
+          }
           final merged = DoorbellSignature(
             id: saved.id,
             label: field('label', saved.label),
             package: saved.package,
             channelPrefix: field('channelPrefix', saved.channelPrefix),
-            entity: field('entity', saved.entity),
+            entity: entity,
             open: open,
             clickLabel: field('clickLabel', saved.clickLabel),
           );
@@ -661,6 +673,9 @@ class DoorbellManager extends Manager {
     }
     return '$id-$n';
   }
+
+  static const _badEntity =
+      'the entity must look like binary_sensor.front_door';
 
   /// Why [signature] cannot be saved, null when it can: a doorbell
   /// needs a label and a package, something to ring it (a notification

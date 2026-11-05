@@ -7,6 +7,7 @@ import 'package:kiosk_satellite/core/event_bus.dart';
 import 'package:kiosk_satellite/core/events.dart';
 import 'package:kiosk_satellite/core/logging.dart';
 import 'package:kiosk_satellite/managers/doorbell/doorbell_manager.dart';
+import 'package:kiosk_satellite/managers/doorbell/doorbell_signature.dart';
 import 'package:kiosk_satellite/managers/settings/definitions.dart'
     as defs;
 import 'package:kiosk_satellite/managers/settings/settings_manager.dart';
@@ -1310,6 +1311,35 @@ void main() {
           'a doorbell needs a notification channel or a Home Assistant '
           'entity');
       expect(settings.get(defs.doorbellSignatures), savedEufy);
+    });
+
+    test('an entity is lower-cased, and one that is not an entity id fails',
+        () async {
+      await build({'ks.doorbell.enabled': true});
+      final bad = await run('doorbellAddSignature', {
+        'label': 'Front',
+        'package': 'com.example.cam',
+        'entity': 'light kitchen',
+        'clickLabel': 'Front door',
+      });
+      expect(bad.ok, isFalse);
+      expect(bad.error, 'the entity must look like binary_sensor.front_door');
+      expect(settings.get(defs.doorbellSignatures), '[]');
+      final good = await run('doorbellAddSignature', {
+        'label': 'Front',
+        'package': 'com.example.cam',
+        'entity': ' Binary_Sensor.Front_Door ',
+        'clickLabel': 'Front door',
+      });
+      expect(good.ok, isTrue);
+      final saved = decodeDoorbellSignatures(settings.get(defs.doorbellSignatures));
+      expect(saved.single.entity, 'binary_sensor.front_door');
+      final update = await run('doorbellUpdateSignature', {
+        'id': saved.single.id,
+        'entity': 'nodot',
+      });
+      expect(update.ok, isFalse);
+      expect(update.error, 'the entity must look like binary_sensor.front_door');
     });
   });
 
