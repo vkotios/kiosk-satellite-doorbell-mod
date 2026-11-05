@@ -296,7 +296,8 @@ class KioskManager extends Manager with WidgetsBindingObserver {
         description:
             'Open another Android app fresh, wait, and tap the card whose '
             'label matches: the kiosk itself calls it for a doorbell '
-            'ring, remote callers are refused. Unpins first like '
+            'ring, remote callers are refused; a saved doorbell is how '
+            'an admin names an app and a card. Unpins first like '
             'launchApp. Needs Doorbell click access. Fails when the app '
             'is not installed or Android refuses.',
         params: const {

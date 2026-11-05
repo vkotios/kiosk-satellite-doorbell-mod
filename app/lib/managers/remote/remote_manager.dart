@@ -1064,7 +1064,8 @@ class RemoteManager extends Manager {
   /// kiosk's own screen may start it. openAppAndClick clicks in another
   /// app's screen, which the remote admin must not drive either; the
   /// kiosk itself still calls it through the command registry, which
-  /// this set does not gate.
+  /// this set does not gate; saving a doorbell through the admin API
+  /// still names an app and a card, so the admin token is the boundary.
   static const _deviceOnly = {
     'intercomAnswer',
     'intercomDecline',
