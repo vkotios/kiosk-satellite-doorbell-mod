@@ -41,6 +41,10 @@ Future<bool> showDoorbellClickDialog(
   // that timed out from one that never started here.
   var started = false;
 
+  // The start command is still opening the app: the waiting text
+  // must not say nothing was tapped while it runs.
+  var starting = false;
+
   // The doorbell was saved: what the dialog returns. Its id feeds the
   // Test open button.
   var saved = false;
@@ -63,6 +67,16 @@ Future<bool> showDoorbellClickDialog(
 
   // The name field was filled from the card label once.
   var namedFromLabel = false;
+
+  // The package the caught card was caught under: a catch from
+  // another package must not survive a package change.
+  var taughtPackage = '';
+
+  // The caught click the name field was filled from, and the
+  // label it filled it with: a new catch refills a name the user
+  // did not change by hand.
+  DoorbellClickCapture? nameFilledFor;
+  var nameFilledValue = '';
 
   // Every command the dialog runs goes through here, one at a time.
   // It returns null when a command already runs. The context and
@@ -142,21 +156,25 @@ Future<bool> showDoorbellClickDialog(
     BuildContext dialogContext,
     StateSetter setState,
   ) async {
-    setState(() => started = true);
+    setState(() {
+      started = true;
+      starting = true;
+    });
     final result = await runCommand(
       dialogContext,
       setState,
       'doorbellStartClickCapture',
       {'package': packageController.text.trim()},
     );
-    if (result == null || result.ok) return;
     if (!dialogContext.mounted) return;
+    setState(() => starting = false);
+    if (result == null || result.ok) return;
     setState(() => started = false);
     _toastFailure(dialogContext, result.error);
   }
 
-  // Stop the running click capture: the waiting screen's Cancel comes
-  // here.
+  // Stop the running click capture: the waiting screen's Cancel
+  // comes here, and so do the buttons that leave step 3.
   Future<void> stopCapture(
     BuildContext dialogContext,
     StateSetter setState,
@@ -168,6 +186,36 @@ Future<bool> showDoorbellClickDialog(
       const {},
     );
     if (dialogContext.mounted) setState(() => started = false);
+  }
+
+  // Go back one step: a click capture step 3 still runs is ended
+  // first, so none is left running behind the dialog.
+  Future<void> goBack(
+    BuildContext dialogContext,
+    StateSetter setState,
+  ) async {
+    if (step == 3 && container.doorbell.clickCapturing.value) {
+      await stopCapture(dialogContext, setState);
+      if (!dialogContext.mounted) return;
+    }
+    setState(() {
+      step = step - 1;
+      // Entering step 2 again checks the access anew.
+      if (step == 2) accessAsked = false;
+    });
+  }
+
+  // Leave step 3 forward: a click capture still running is ended
+  // first, so none runs on the later steps.
+  Future<void> leaveStep3(
+    BuildContext dialogContext,
+    StateSetter setState,
+  ) async {
+    if (container.doorbell.clickCapturing.value) {
+      await stopCapture(dialogContext, setState);
+      if (!dialogContext.mounted) return;
+    }
+    setState(() => step = 4);
   }
 
   // Save the doorbell: the name, the app, the card to click and the
@@ -186,16 +234,21 @@ Future<bool> showDoorbellClickDialog(
         'clickLabel': labelController.text.trim(),
       },
     );
-    if (result == null || !dialogContext.mounted) return;
+    if (result == null) return;
+    // The doorbell is saved the moment the command says so, even
+    // when a Cancel closed the dialog meanwhile: the dialog still
+    // reports it saved.
+    if (result.ok) {
+      saved = true;
+      final data = result.data;
+      savedId = data is Map ? '${data['id'] ?? ''}' : '';
+    }
+    if (!dialogContext.mounted) return;
     if (!result.ok) {
       _toastFailure(dialogContext, result.error);
       return;
     }
-    final data = result.data;
-    setState(() {
-      saved = true;
-      savedId = data is Map ? '${data['id'] ?? ''}' : '';
-    });
+    setState(() {});
   }
 
   // Open the saved doorbell the way a ring would, to check that the
@@ -214,10 +267,34 @@ Future<bool> showDoorbellClickDialog(
     _toastFailure(dialogContext, result.error);
   }
 
+  // The dialog's setState and whether the dialog is already
+  // closed: the capture listener rebuilds the dialog through
+  // them.
+  StateSetter? dialogSetState;
+  var closed = false;
+
+  // The caught card fills the label field from here: writing the
+  // controller inside the step's builder would mark the label
+  // field dirty during the build. The package the catch belongs
+  // to is noted, and the dialog wakes to show the catch.
+  void onCaught() {
+    final caught = container.doorbell.clickCaptured.value;
+    if (caught == null) return;
+    if (identical(namedFor, caught)) return;
+    namedFor = caught;
+    taughtPackage = packageController.text.trim();
+    labelController.text = caught.label;
+    if (closed) return;
+    dialogSetState?.call(() {});
+  }
+
+  container.doorbell.clickCaptured.addListener(onCaught);
+
   await showDialog<bool>(
     context: context,
     builder: (context) => StatefulBuilder(
       builder: (context, setState) {
+        dialogSetState = setState;
         // Entering step 2 checks the click access, every time the
         // step is entered. The check is a command too, so it goes
         // through the wrapper, whose setState must not run inside
@@ -231,12 +308,33 @@ Future<bool> showDoorbellClickDialog(
             }),
           );
         }
-        // The name starts as the card label, filled once when the
-        // step first shows, and only when nothing was typed yet.
-        if (step == 4 && !namedFromLabel) {
-          namedFromLabel = true;
-          if (nameController.text.trim().isEmpty) {
-            nameController.text = labelController.text.trim();
+        // A catch from another package must not survive: coming
+        // back to step 3 after the package changed forgets it,
+        // the label typed for it and the name filled from it.
+        if (step == 3 && packageController.text.trim() != taughtPackage) {
+          taughtPackage = packageController.text.trim();
+          container.doorbell.clickCaptured.value = null;
+          labelController.text = '';
+          namedFor = null;
+          namedFromLabel = false;
+          nameFilledFor = null;
+        }
+        // The name starts as the card label, filled when the step
+        // shows after a new catch, and only when the user did not
+        // change it by hand.
+        if (step == 4) {
+          final caught = container.doorbell.clickCaptured.value;
+          final caughtAgain = caught != null &&
+              !identical(nameFilledFor, caught);
+          if (!namedFromLabel || caughtAgain) {
+            namedFromLabel = true;
+            nameFilledFor = caught;
+            final label = labelController.text.trim();
+            if (nameController.text.trim().isEmpty ||
+                nameController.text.trim() == nameFilledValue) {
+              nameController.text = label;
+              nameFilledValue = label;
+            }
           }
         }
         final enabled = container.settings.get(doorbellEnabled);
@@ -326,13 +424,15 @@ Future<bool> showDoorbellClickDialog(
             ),
           ];
         } else if (step == 3) {
-          final startButton = Padding(
+          // The button that starts a capture, relabelled by where
+          // it is used: the first teach and the one after a catch.
+          Widget startButton(String label) => Padding(
             padding: const EdgeInsets.only(top: 12),
             child: TextButton(
               onPressed: busy
                   ? null
                   : () => unawaited(startCapture(context, setState)),
-              child: const Text('Open the app and wait'),
+              child: Text(label),
             ),
           );
           rows = [
@@ -349,15 +449,15 @@ Future<bool> showDoorbellClickDialog(
                 builder: (context, _) {
                   final capturing = container.doorbell.clickCapturing.value;
                   final caught = container.doorbell.clickCaptured.value;
-                  // The caught card fills the label once per caught
-                  // click.
-                  if (caught != null && !identical(namedFor, caught)) {
-                    namedFor = caught;
-                    labelController.text = caught.label;
-                  }
-                  if (caught == null) namedFor = null;
                   if (caught != null) {
-                    return Text('Caught: ${caught.label}');
+                    return Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Text('Caught: ${caught.label}'),
+                        startButton('Teach again'),
+                      ],
+                    );
                   }
                   if (capturing) {
                     return Column(
@@ -385,17 +485,23 @@ Future<bool> showDoorbellClickDialog(
                       ],
                     );
                   }
+                  if (starting) {
+                    return const Padding(
+                      padding: EdgeInsets.only(top: 12),
+                      child: Text('Opening the app...'),
+                    );
+                  }
                   if (started) {
                     return Column(
                       crossAxisAlignment: CrossAxisAlignment.start,
                       mainAxisSize: MainAxisSize.min,
                       children: [
                         const Text('Nothing was tapped in time.'),
-                        startButton,
+                        startButton('Open the app and wait'),
                       ],
                     );
                   }
-                  return startButton;
+                  return startButton('Open the app and wait');
                 },
               ),
             ),
@@ -488,15 +594,11 @@ Future<bool> showDoorbellClickDialog(
               onPressed: () => Navigator.pop(context),
               child: const Text('Cancel'),
             ),
-            if (step > 1 && step < 5)
+            if (step > 1 && (step < 5 || !saved))
               TextButton(
                 onPressed: busy
                     ? null
-                    : () => setState(() {
-                        step = step - 1;
-                        // Entering step 2 again checks the access anew.
-                        if (step == 2) accessAsked = false;
-                      }),
+                    : () => unawaited(goBack(context, setState)),
                 child: const Text('Back'),
               ),
             if (step == 1)
@@ -521,7 +623,7 @@ Future<bool> showDoorbellClickDialog(
               TextButton(
                 onPressed: busy || labelController.text.trim().isEmpty
                     ? null
-                    : () => setState(() => step = 4),
+                    : () => unawaited(leaveStep3(context, setState)),
                 child: const Text('Next'),
               )
             else if (step == 4)
@@ -558,6 +660,10 @@ Future<bool> showDoorbellClickDialog(
       },
     ),
   );
+  // The dialog closed: the capture listener goes with it, and no
+  // late catch may write the label or rebuild it.
+  closed = true;
+  container.doorbell.clickCaptured.removeListener(onCaught);
   // The dialog is closing but still on screen, so the text
   // controllers are left to the garbage collector: they hold no
   // resource, and disposing them under a mounted TextField is an
