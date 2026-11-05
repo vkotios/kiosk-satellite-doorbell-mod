@@ -48,14 +48,13 @@ class DoorbellClickCapture {
 /// one of them and reports it here. A ring is answered by opening the
 /// notification's own tap action through openNotificationAction or by
 /// launching the doorbell's app and clicking its card through
-/// openAppAndClick, with the
-/// doorbell's own return time, and the Home Assistant event
-/// kiosk_satellite_doorbell is published after it. A Home Assistant
-/// entity rings a doorbell through ringFromEntity, which always opens
-/// by click. The manager also runs
-/// the capture the signature picker uses: the capturing and captured
-/// notifiers and the start and stop commands. Commands list, add and
-/// remove the saved doorbells.
+/// openAppAndClick, with the global doorbell return setting, and the
+/// Home Assistant event kiosk_satellite_doorbell is published after
+/// it. A Home Assistant entity rings a doorbell through ringFromEntity,
+/// which always opens by click. The manager also runs the capture the
+/// signature picker uses: the capturing and captured notifiers and the
+/// start and stop commands. Commands list, add, update, remove and
+/// test open the saved doorbells, and start and stop the click capture.
 class DoorbellManager extends Manager {
   DoorbellManager(super.bus, super.commands, super.log, this._settings);
 
@@ -79,17 +78,39 @@ class DoorbellManager extends Manager {
 
   StreamSubscription<SettingChanged>? _settingSub;
 
-  /// The clock the 20 second entity ring window reads; the tests set it.
+  /// The clock the opened-recently window reads; the tests set it.
   @visibleForTesting
   DateTime Function() clock = DateTime.now;
 
-  /// When each entity-rung doorbell last rang, to ignore a second ring
-  /// within 20 seconds.
-  final Map<String, DateTime> _entityRings = {};
+  /// When each doorbell last opened, to ignore a ring of the same one
+  /// within the dedupe window.
+  final Map<String, DateTime> _opened = {};
 
-  /// The doorbell label each click label last opened, so a click result
-  /// can name the doorbell.
+  /// The doorbell label each package and click label last opened, so a
+  /// click result can name the doorbell.
   final Map<String, String> _clickRings = {};
+
+  /// The window a ring of a doorbell is ignored over after it opened:
+  /// never shorter than the old 20 seconds, and always long enough to
+  /// cover the click wait: the delay, the 15 second search window and
+  /// a margin.
+  int get _dedupeSeconds {
+    final delay = _settings.get(defs.doorbellClickDelaySeconds).toInt();
+    final clickWait = delay + 15 + 5;
+    return clickWait > 20 ? clickWait : 20;
+  }
+
+  /// Whether [id] opened less than [_dedupeSeconds] ago.
+  bool _recentlyOpened(String id) {
+    final last = _opened[id];
+    return last != null &&
+        clock().difference(last).inSeconds < _dedupeSeconds;
+  }
+
+  /// Record that [id] opened now, starting its dedupe window.
+  void _recordOpened(String id) {
+    _opened[id] = clock();
+  }
 
   static const _channel = MethodChannel('kiosk_satellite/doorbell');
 
@@ -135,7 +156,8 @@ class DoorbellManager extends Manager {
       Command(
         name: 'doorbellSignatures',
         description:
-            'The saved doorbells: [{id, label, package, channelPrefix}].',
+            'The saved doorbells: [{id, label, package, channelPrefix}], '
+            'with the optional keys entity, open and clickLabel.',
         handler: (_) async => CommandResult.ok(
           [for (final signature in _signatures) signature.toJson()],
         ),
@@ -394,13 +416,17 @@ class DoorbellManager extends Manager {
           // back over the doorbell app so the user sees the card.
           unawaited(commands.execute('bringToFront', const {}));
         } else if (call.method == 'clickResult') {
+          final package = '${args['package'] ?? ''}';
           final label = '${args['label'] ?? ''}';
           final result = '${args['result'] ?? ''}';
           log.info(name, "click '$label': $result");
           if (result != 'clicked') {
+            // The click is matched by package and label: two doorbells
+            // can share a click label.
+            final key = package.isEmpty ? label : '$package\n$label';
             bus.publish(HaEventRequested('kiosk_satellite_doorbell', {
               'event_type': 'click_failed',
-              'doorbell': _clickRings[label] ?? label,
+              'doorbell': _clickRings[key] ?? label,
               'label': label,
               'reason': result,
             }));
@@ -498,7 +524,9 @@ class DoorbellManager extends Manager {
 
   /// Tell the native listener which doorbells to answer: the saved
   /// signatures a notification can ring, then the packages of the ones
-  /// a click or a Home Assistant entity opens. An empty list while the
+  /// a click can open: a doorbell with a click label (a click ring, a
+  /// tap-failure fallback or a test open), one a ring opens by click,
+  /// or one a Home Assistant entity rings. An empty list while the
   /// setting is off makes it ignore every ring.
   Future<void> _pushConfiguration() async {
     final signatures = _settings.get(defs.doorbellEnabled)
@@ -522,7 +550,9 @@ class DoorbellManager extends Manager {
       await _channel.invokeMethod('configureClick', {
         'packages': {
           for (final signature in signatures)
-            if (signature.opensByClick || signature.rungByEntity)
+            if (signature.clickLabel.isNotEmpty ||
+                signature.opensByClick ||
+                signature.rungByEntity)
               signature.package,
         }.toList(),
       });
@@ -550,8 +580,8 @@ class DoorbellManager extends Manager {
   /// The entity watcher calls this when a doorbell's Home Assistant
   /// entity turns on: wake the screen, open the doorbell by click and
   /// tell Home Assistant. A second ring of the same doorbell within
-  /// 20 seconds is ignored, and so is one while the doorbell setting
-  /// is off.
+  /// the dedupe window is ignored, and so is one while the doorbell
+  /// setting is off or a camera is being taught.
   Future<void> ringFromEntity(String id) async {
     DoorbellSignature? saved;
     for (final signature in _signatures) {
@@ -565,16 +595,22 @@ class DoorbellManager extends Manager {
       );
       return;
     }
-    final now = clock();
-    final last = _entityRings[saved.id];
-    if (last != null && now.difference(last).inSeconds < 20) {
+    if (clickCapturing.value) {
       log.info(
         name,
-        "ring from '${saved.entity}' ignored: it rang within 20 s",
+        "ring from '${saved.entity}' ignored while a camera is being taught",
       );
       return;
     }
-    _entityRings[saved.id] = now;
+    if (_recentlyOpened(saved.id)) {
+      log.info(
+        name,
+        "ring from '${saved.entity}' ignored: it opened within "
+        "$_dedupeSeconds s",
+      );
+      return;
+    }
+    _recordOpened(saved.id);
     if (_settings.get(defs.lockdownEnabled)) {
       log.info(
         name,
@@ -649,10 +685,15 @@ class DoorbellManager extends Manager {
 
   /// Open [s] the way a click ring does: launch its app and click its
   /// card, remembering the click so a later click result can name the
-  /// doorbell it opened.
+  /// doorbell it opened. The kiosk comes back after the doorbell return
+  /// setting, but never before the click could land: the delay plus the
+  /// 15 second search window plus a margin.
   Future<CommandResult> _openByClick(DoorbellSignature s) async {
     final delay = _settings.get(defs.doorbellClickDelaySeconds).toInt();
-    _clickRings[s.clickLabel] = s.label;
+    var returnAfter = _settings.get(defs.doorbellReturnSeconds).toInt();
+    final clickWait = delay + 15 + 10;
+    if (returnAfter < clickWait) returnAfter = clickWait;
+    _clickRings['${s.package}\n${s.clickLabel}'] = s.label;
     log.info(
       name,
       "doorbell '${s.label}': opening by click, tap after ${delay}s",
@@ -661,7 +702,7 @@ class DoorbellManager extends Manager {
       'package': s.package,
       'label': s.clickLabel,
       'delaySeconds': delay,
-      'returnAfterSeconds': _settings.get(defs.doorbellReturnSeconds).toInt(),
+      'returnAfterSeconds': returnAfter,
     });
     if (!result.ok) {
       log.warn(
@@ -681,6 +722,13 @@ class DoorbellManager extends Manager {
     if (key.isEmpty) return;
     if (!_settings.get(defs.doorbellEnabled)) {
       log.info(name, "ring '$title' ignored: the doorbell setting is off");
+      return;
+    }
+    if (clickCapturing.value) {
+      log.info(
+        name,
+        "ring '$title' ignored while a camera is being taught",
+      );
       return;
     }
 
@@ -709,18 +757,29 @@ class DoorbellManager extends Manager {
       }));
     }
 
+    DoorbellSignature? saved;
+    for (final signature in _signatures) {
+      if (signature.id == signatureId) saved = signature;
+    }
+    // A doorbell an entity also rings would open twice when its
+    // notification follows its entity ring, so a ring for one that
+    // opened recently is ignored.
+    if (saved != null && saved.rungByEntity && _recentlyOpened(saved.id)) {
+      log.info(
+        name,
+        "ring '$title' ignored: it opened within $_dedupeSeconds s",
+      );
+      return;
+    }
     if (_settings.get(defs.lockdownEnabled)) {
       log.info(name, "ring '$title' not opened: lockdown holds");
       publish(false);
       return;
     }
-    DoorbellSignature? saved;
-    for (final signature in _signatures) {
-      if (signature.id == signatureId) saved = signature;
-    }
     if (saved != null && saved.opensByClick && saved.clickLabel.isNotEmpty) {
       // A dark panel or a screensaver would hide the camera it opens.
       await commands.execute('screenOn', const {});
+      _recordOpened(saved.id);
       final result = await _openByClick(saved);
       publish(result.ok, 'click');
       return;
@@ -738,6 +797,7 @@ class DoorbellManager extends Manager {
     if (!result.ok) log.warn(name, "ring '$title' not opened: ${result.error}");
     if (!result.ok && saved != null && saved.clickLabel.isNotEmpty) {
       log.info(name, 'tap failed, falling back to a click');
+      _recordOpened(saved.id);
       final click = await _openByClick(saved);
       publish(click.ok, 'click');
       return;
