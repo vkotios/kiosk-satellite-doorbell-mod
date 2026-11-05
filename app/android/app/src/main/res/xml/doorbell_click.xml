@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- The Doorbell click's contract with Android: window content is read
+     only during a doorbell click or capture, from the saved doorbell app
+     only; packageNames starts as this app and the service widens it to
+     the saved doorbell packages at runtime. See DoorbellClickService. -->
+<accessibility-service xmlns:android="http://schemas.android.com/apk/res/android"
+    android:accessibilityEventTypes="typeViewClicked"
+    android:accessibilityFeedbackType="feedbackGeneric"
+    android:accessibilityFlags="flagIncludeNotImportantViews"
+    android:canRetrieveWindowContent="true"
+    android:notificationTimeout="0"
+    android:packageNames="me.jxl.kiosk_satellite"
+    android:description="@string/doorbell_click_description" />
