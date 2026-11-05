@@ -772,6 +772,12 @@ async function renderSettings({ cached = false } = {}) {
       { method: 'POST', body: JSON.stringify({ which: ['overlay'] }) });
     const openGuard = () => api('/api/commands/openUiGuardSettings',
       { method: 'POST', body: '{}' });
+    const openClickSettings = () => api('/api/commands/doorbellOpenClickSettings',
+      { method: 'POST', body: '{}' });
+    const pollClickAccess = () => api('/api/commands/doorbellClickAccess',
+      { method: 'POST', body: '{}' }).then((r) => r.json())
+      .then((res) => res.data ? res.data.running === true : null)
+      .catch(() => null);
     const permRow = (name, held, missing, btnText, onClick, poll) => {
       const row = document.createElement('div');
       row.className = 'row';
@@ -895,8 +901,9 @@ async function renderSettings({ cached = false } = {}) {
       sync();
     }
 
-    // The Doorbell's group answers for one grant: the notification
-    // access its rings arrive as. It shows only while the doorbell is
+    // The Doorbell's group answers for two grants: the notification
+    // access its rings arrive as, and the Accessibility service that
+    // taps the camera app's card. It shows only while the doorbell is
     // switched on, following the toggle in place like the Launcher's
     // group above.
     {
@@ -906,6 +913,12 @@ async function renderSettings({ cached = false } = {}) {
           'Without this the doorbell sees no rings and never opens its '
             + 'app. The grant screen appears on the tablet.',
           'Grant on device', grantNotifications, pollNotifications),
+        permRow('Doorbell click access',
+          'The kiosk can tap your doorbell camera.',
+          'Without this the kiosk cannot tap the camera. Turn it on in '
+            + 'Android Accessibility settings on the tablet (find Kiosk '
+            + 'Satellite there).',
+          'Open on device', openClickSettings, pollClickAccess),
       ]);
       const tab = document.getElementById('tab-doorbell');
       const on = () => {
