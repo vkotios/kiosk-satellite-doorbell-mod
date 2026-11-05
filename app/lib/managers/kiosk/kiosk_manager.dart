@@ -292,6 +292,55 @@ class KioskManager extends Manager with WidgetsBindingObserver {
 
     commands.register(
       Command(
+        name: 'openAppAndClick',
+        description:
+            'Open another Android app fresh, wait, and tap the card whose '
+            'label matches: used by a doorbell ring. Unpins first like '
+            'launchApp. Fails when the app is not installed or Android '
+            'refuses.',
+        params: const {
+          'package': 'Android package of the doorbell app',
+          'label': 'The label of the card to tap',
+          'delaySeconds':
+              'Seconds to wait after the app opens before looking for the '
+              'card',
+          'returnAfterSeconds':
+              'Idle seconds before the kiosk comes back; omit to use the '
+              "launcher's own return",
+        },
+        handler: (p) async {
+          final package = '${p['package'] ?? ''}'.trim();
+          if (package.isEmpty) {
+            return const CommandResult.fail('package required');
+          }
+          final label = '${p['label'] ?? ''}'.trim();
+          if (label.isEmpty) {
+            return const CommandResult.fail('label required');
+          }
+          var delaySeconds = (p['delaySeconds'] as num?)?.toInt() ?? 8;
+          if (delaySeconds < 0) delaySeconds = 0;
+          if (delaySeconds > 120) delaySeconds = 120;
+          final returnAfterSeconds = (p['returnAfterSeconds'] as num?)?.toInt();
+          return _openOverKiosk(
+            what: label,
+            package: package,
+            returnAfterSeconds: returnAfterSeconds,
+            open: () => _doorbellChannel.invokeMethod<bool>('launchAndClick', {
+              'package': package,
+              'label': label,
+              'delaySeconds': delaySeconds,
+              'windowSeconds': 15,
+            }),
+            notOpened: '$package is not installed, or Android refused to '
+                'open it',
+            unavailable: 'opening apps is Android-only',
+          );
+        },
+      ),
+    );
+
+    commands.register(
+      Command(
         name: 'openUri',
         description:
             'Open a deep link or custom URI with whatever app claims it '

@@ -1058,14 +1058,17 @@ class RemoteManager extends Manager {
   }
 
   /// Commands that only the kiosk's own screen may run: answering an
-  /// intercom call is a confirmation the remote admin must not give, and
-  /// the doorbell capture reads other apps' notifications, so only the
+  /// intercom call is a confirmation the remote admin must not give, the
+  /// doorbell capture reads other apps' notifications, and the click
+  /// capture opens the doorbell app and reads its screen, so only the
   /// kiosk's own screen may start it.
   static const _deviceOnly = {
     'intercomAnswer',
     'intercomDecline',
     'doorbellStartCapture',
     'doorbellStopCapture',
+    'doorbellStartClickCapture',
+    'doorbellStopClickCapture',
   };
 
   /// [_deviceOnly] as the test can reach it.
