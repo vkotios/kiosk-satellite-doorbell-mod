@@ -24,24 +24,30 @@ object NodeWalker {
     private const val MAX_CAPTURE_LEVELS = 3
 
     /** The node to click for [label], or null.
-     *  Pass 1: the first node in document order (depth first, children in list
-     *  order, the node before its children) whose text matches the label exactly
-     *  after normalizing (LabelMatcher.matches); a node whose text is empty may
-     *  match by description in the same pass (text is tried before description on
-     *  each node).
-     *  Pass 2, only when pass 1 found nothing: if exactly one node (by text,
-     *  then description) contains the label (LabelMatcher.contains), that node;
-     *  two or more means ambiguous, so null.
-     *  The matched node is returned as its click target: itself when clickable,
-     *  else its nearest clickable ancestor (walk parent links, at most 12
-     *  steps); null when there is none. A blank label returns null. Never
-     *  returns a node that was not matched or an ancestor of one.
+     *  Pass 1: the exact matches in document order (depth first, children
+     *  in list order, the node before its children) are tried one by one,
+     *  and the first with a click target wins; a node whose text is empty
+     *  may match by description in the same pass (text is tried before
+     *  description on each node). An exact match without a click target
+     *  does not end the search.
+     *  Pass 2, only when no exact match has a click target: if exactly
+     *  one node (by text, then description) contains the label
+     *  (LabelMatcher.contains), that node; two or more means ambiguous,
+     *  so null.
+     *  The matched node is returned as its click target: itself when
+     *  clickable, else its nearest clickable ancestor (walk parent
+     *  links, at most 12 steps); null when there is none. A blank label
+     *  returns null. Never returns a node that was not matched or an
+     *  ancestor of one.
      *  The walk stops descending at depth 40. */
     fun findClickTarget(root: ClickNode, label: String): ClickNode? {
         if (LabelMatcher.normalize(label).isBlank()) return null
         val nodes = documentOrder(root)
-        val exact = nodes.firstOrNull { node -> matchesExactly(node, label) }
-        if (exact != null) return clickTargetOf(exact)
+        for (node in nodes) {
+            if (!matchesExactly(node, label)) continue
+            val target = clickTargetOf(node)
+            if (target != null) return target
+        }
         val containing = nodes.filter { node -> matchesContaining(node, label) }
         if (containing.size == 1) return clickTargetOf(containing[0])
         return null
