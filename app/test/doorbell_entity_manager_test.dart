@@ -77,6 +77,18 @@ void main() {
       expect(doorbell.rung, ['front']);
     });
 
+    test('an attribute-only update does not erase the stored state', () async {
+      await start([signature('front', entity)]);
+      watcher.applyStateMap(entity, const {'state': 'off'});
+      watcher.applyStateMap(
+        entity,
+        const {'attributes': {'friendly_name': 'Front door'}},
+      );
+      watcher.applyStateMap(entity, const {'state': 'on'});
+      await pumpEventQueue();
+      expect(doorbell.rung, ['front']);
+    });
+
     test('the first state on does not ring', () async {
       await start([signature('front', entity)]);
       watcher.applyEntityState(entity, 'on');

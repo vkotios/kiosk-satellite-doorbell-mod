@@ -102,13 +102,38 @@ void main() {
     test('drops a doorbell nothing can ring or open', () {
       final decoded = decodeDoorbellSignatures(
         '[{"id":"a","package":"com.a","entity":"binary_sensor.a"},'
-        '{"id":"b","package":"com.b","channelPrefix":"com.b.ring",'
-        '"open":"click"},'
         '{"id":"c","package":"com.c"},'
         '{"package":"com.d","channelPrefix":"com.d.ring"},'
         '{"id":"e","channelPrefix":"com.e.ring"}]',
       );
       expect(decoded, isEmpty);
+    });
+
+    test('keeps a notification doorbell that opens by a click without a '
+        'clickLabel, opening by the tap instead', () {
+      final decoded = decodeDoorbellSignatures(
+        '[{"id":"a","package":"com.a","channelPrefix":"com.a.ring",'
+        '"open":"click"}]',
+      );
+      expect(decoded, hasLength(1));
+      expect(decoded.single.open, 'tap');
+      expect(decoded.single.clickLabel, '');
+    });
+
+    test('drops a click doorbell without a clickLabel and a channel', () {
+      final decoded = decodeDoorbellSignatures(
+        '[{"id":"a","package":"com.a","entity":"binary_sensor.a",'
+        '"open":"click"}]',
+      );
+      expect(decoded, isEmpty);
+    });
+
+    test('normalizes the entity id', () {
+      final decoded = decodeDoorbellSignatures(
+        '[{"id":"a","package":"com.a","entity":"Binary_Sensor.X",'
+        '"clickLabel":"A"}]',
+      );
+      expect(decoded.single.entity, 'binary_sensor.x');
     });
 
     test('keeps both triggers together and a click-open doorbell', () {
@@ -164,6 +189,21 @@ void main() {
       expect(decoded, hasLength(1));
       expect(decoded.single.label, 'First');
       expect(decoded.single.package, 'com.first');
+    });
+  });
+
+  group('normalizeDoorbellEntity', () {
+    test('trims and lower-cases a valid entity id', () {
+      expect(
+        normalizeDoorbellEntity('  Binary_Sensor.Front_Door '),
+        'binary_sensor.front_door',
+      );
+    });
+
+    test('returns null for anything that is not an entity id', () {
+      expect(normalizeDoorbellEntity('nodot'), isNull);
+      expect(normalizeDoorbellEntity('a.b c'), isNull);
+      expect(normalizeDoorbellEntity(''), isNull);
     });
   });
 

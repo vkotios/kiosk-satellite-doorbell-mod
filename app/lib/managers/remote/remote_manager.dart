@@ -1061,7 +1061,10 @@ class RemoteManager extends Manager {
   /// intercom call is a confirmation the remote admin must not give, the
   /// doorbell capture reads other apps' notifications, and the click
   /// capture opens the doorbell app and reads its screen, so only the
-  /// kiosk's own screen may start it.
+  /// kiosk's own screen may start it. openAppAndClick clicks in another
+  /// app's screen, which the remote admin must not drive either; the
+  /// kiosk itself still calls it through the command registry, which
+  /// this set does not gate.
   static const _deviceOnly = {
     'intercomAnswer',
     'intercomDecline',
@@ -1069,6 +1072,7 @@ class RemoteManager extends Manager {
     'doorbellStopCapture',
     'doorbellStartClickCapture',
     'doorbellStopClickCapture',
+    'openAppAndClick',
   };
 
   /// [_deviceOnly] as the test can reach it.
