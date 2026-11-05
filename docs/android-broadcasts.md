@@ -68,9 +68,10 @@ The extras are the fields of the [`esphome.kiosk_satellite_alarm`](alarms.md#ala
 
 | Action | When |
 | --- | --- |
-| `DOORBELL_RINGING` | A saved doorbell app rang. |
+| `DOORBELL_RINGING` | A doorbell rang, from its app's notification or from its Home Assistant sensor. |
+| `DOORBELL_CLICK_FAILED` | A ring that opened by the card could not tap it. |
 
-The extras are the fields of the [`esphome.kiosk_satellite_doorbell`](doorbell.md#home-assistant-and-android) event: `doorbell`, `label` and `opened`.
+The extras are the fields of the [`esphome.kiosk_satellite_doorbell`](doorbell.md#home-assistant-and-android) event: `doorbell`, `label`, `opened`, `trigger` and `open` on `DOORBELL_RINGING`, and `doorbell`, `label` and `reason` on `DOORBELL_CLICK_FAILED`.
 
 ## Screensaver
 

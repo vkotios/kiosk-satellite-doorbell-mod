@@ -97,13 +97,16 @@ data:
   doorbell: Front door
   label: Front door
   opened: true
+  trigger: notification
+  open: tap
 ```
 
 | `event_type` | When |
 | --- | --- |
-| `ringing` | A saved doorbell app rang. |
+| `ringing` | A doorbell rang, from its app's notification or from its Home Assistant sensor. It goes out when the open has started. |
+| `click_failed` | A ring that opened by the card could not tap it. It follows a `ringing` only when the card was not tapped. |
 
-`doorbell` is the title of the ring notification, `label` the name you saved the doorbell under (the title when it cannot be told), and `opened` whether the kiosk opened the ring. See [Doorbell](doorbell.md) for the feature.
+`doorbell` is the title of the ring notification, or the name you saved the doorbell under when a sensor rang it. `label` is the name you saved the doorbell under (the title when it cannot be told), `opened` whether the kiosk opened the ring, `trigger` what rang it (`notification` or `entity`) and `open` how it opens (`tap` or `click`). On `click_failed`, `label` is the card it looked for and `reason` why the tap did not land: `not_found`, `wrong_app` or `service_off`. See [Doorbell](doorbell.md) for the feature.
 
 ```yaml
 # Turn the porch light on when the doorbell rings.
