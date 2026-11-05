@@ -54,6 +54,20 @@ class NodeWalkerTest {
     /** The Front camera card of a home screen root: the child after the Back card. */
     private fun frontCard(root: ClickNode): ClickNode = root.children[2]
 
+    /** A chain with the label node [steps] parent steps below a clickable
+     *  top, so the clickable ancestor is exactly [steps] steps above the match. */
+    private fun chainToClickable(steps: Int): FakeNode {
+        val root = FakeNode(clickable = true)
+        var node = root
+        repeat(steps - 1) {
+            val child = FakeNode()
+            node.add(child)
+            node = child
+        }
+        node.add(FakeNode(text = "Doorbell Front Door"))
+        return root
+    }
+
     @Test fun findClickTargetReturnsTheCardHoldingTheExactDoorbellText() {
         val root = homeScreen()
         // The text node inside the card is not clickable, so its nearest clickable ancestor, the card, is returned.
@@ -149,6 +163,43 @@ class NodeWalkerTest {
             node = child
         }
         node.add(FakeNode(text = "Doorbell Front Door", clickable = true))
+        assertNull(NodeWalker.findClickTarget(root, "Doorbell Front Door"))
+    }
+
+    @Test fun findClickTargetReturnsTheSecondExactMatchWhenTheFirstHasNoClickTarget() {
+        val root = FakeNode()
+        val bare = FakeNode(text = "Doorbell Front Door")
+        val card = FakeNode(clickable = true)
+        val second = FakeNode(text = "Doorbell Front Door")
+        root.add(bare)
+        root.add(card)
+        card.add(second)
+        // The first exact match has no clickable ancestor, so the second one is tried.
+        assertSame(card, NodeWalker.findClickTarget(root, "Doorbell Front Door"))
+    }
+
+    @Test fun findClickTargetFindsAClickableAncestorTwelveStepsUpButNotThirteen() {
+        // MAX_PARENT_STEPS is 12: a clickable top exactly 12 parent steps above the match is found, one 13 above is not.
+        val near = chainToClickable(12)
+        assertSame(near, NodeWalker.findClickTarget(near, "Doorbell Front Door"))
+        val far = chainToClickable(13)
+        assertNull(NodeWalker.findClickTarget(far, "Doorbell Front Door"))
+    }
+
+    @Test fun findClickTargetDoesNotMatchByDescriptionWhenTheTextIsNotBlank() {
+        // hasNoText is "the text is null or blank": a node with non-blank text never matches by description.
+        val root = FakeNode()
+        val card = FakeNode(clickable = true)
+        root.add(card)
+        card.add(FakeNode(text = "Battery 84%", description = "Doorbell Front Door"))
+        assertNull(NodeWalker.findClickTarget(root, "Doorbell Front Door"))
+    }
+
+    @Test fun findClickTargetReturnsNullWhenTheExactMatchHasNoTargetAndTwoNodesContain() {
+        val root = FakeNode()
+        root.add(FakeNode(text = "Doorbell Front Door"))
+        root.add(FakeNode(text = "Doorbell Front Door and more", clickable = true))
+        // The exact match has no clickable ancestor and two nodes contain the label, so the pass is ambiguous.
         assertNull(NodeWalker.findClickTarget(root, "Doorbell Front Door"))
     }
 

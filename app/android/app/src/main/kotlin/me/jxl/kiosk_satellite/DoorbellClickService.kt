@@ -23,11 +23,12 @@ import android.view.accessibility.AccessibilityNodeInfo
  * the doorbell app is reported as the label to save.
  *
  * Privacy: window content is read only while a click job or a capture is
- * running, and only from the saved doorbell packages. [applyScope] keeps
- * Android's event filter at exactly those packages, and
- * [onAccessibilityEvent] drops every other event on its first line. The
- * only text this service ever logs is the saved label, with the job's
- * result.
+ * running, and only from the saved doorbell packages, plus the one
+ * package a teach capture is open for (teach runs before save).
+ * [applyScope] keeps Android's event filter at exactly those packages,
+ * and [onAccessibilityEvent] drops every other event on its first line.
+ * The only text this service ever logs is the saved label, with the
+ * job's result.
  */
 class DoorbellClickService : AccessibilityService() {
     companion object {
@@ -73,6 +74,11 @@ class DoorbellClickService : AccessibilityService() {
     // the capture token.
     private var jobToken = 0
 
+    // Main thread only: the running job's result callback, so a service
+    // that dies mid-job still reports "service_off". Cleared when the
+    // job reports; a job replaced by a new startClick reports nothing.
+    private var jobOnResult: ((String) -> Unit)? = null
+
     override fun onServiceConnected() {
         super.onServiceConnected()
         running = true
@@ -91,11 +97,18 @@ class DoorbellClickService : AccessibilityService() {
     }
 
     /** The service is gone: forget the statics, cancel the job and the
-     *  capture, and report the capture's end to Dart. */
+     *  capture, and report the running job's "service_off" and the
+     *  capture's end to Dart. */
     private fun disconnected() {
-        running = false
         if (instance === this) {
+            running = false
             instance = null
+        }
+        val onResult = jobOnResult
+        if (onResult != null) {
+            jobOnResult = null
+            Log.i(TAG, "click: service_off")
+            onResult("service_off")
         }
         cancelClick()
         if (captureOpen) {
@@ -107,11 +120,21 @@ class DoorbellClickService : AccessibilityService() {
 
     /** Keep Android's event filter at the saved doorbell packages, or at
      *  only this app's own package while there are none, so no other app's
-     *  content is ever delivered here. */
+     *  content is ever delivered here. While a capture is open, the package
+     *  it is taught in is in the filter too, saved or not: teach runs
+     *  before save. */
     fun applyScope() {
-        val info = serviceInfo
-        info.packageNames =
-            (if (packages.isEmpty()) setOf(packageName) else packages).toTypedArray()
+        val info = serviceInfo ?: return
+        val openPkg = if (captureOpen) capturePkg else null
+        val scope =
+            if (openPkg != null) {
+                packages + openPkg
+            } else if (packages.isEmpty()) {
+                setOf(packageName)
+            } else {
+                packages
+            }
+        info.packageNames = scope.toTypedArray()
         serviceInfo = info
     }
 
@@ -123,15 +146,19 @@ class DoorbellClickService : AccessibilityService() {
         if (event.eventType != AccessibilityEvent.TYPE_VIEW_CLICKED) return
         val pkg = capturePkg ?: return
         if (event.packageName?.toString() != pkg) return
-        val source = event.source ?: return
-        val label = LabelMatcher.bestLabel(NodeWalker.capturedTexts(NodeAdapter(source)))
-        // No label on this click: keep waiting, the user may tap again.
-        if (label == null) return
-        val onCaptured = captureOnCaptured
-        val onEnded = captureOnEnded
-        closeCapture()
-        onCaptured?.invoke(label)
-        onEnded?.invoke("caught")
+        try {
+            val source = event.source ?: return
+            val label = LabelMatcher.bestLabel(NodeWalker.capturedTexts(NodeAdapter(source)))
+            // No label on this click: keep waiting, the user may tap again.
+            if (label == null) return
+            val onCaptured = captureOnCaptured
+            val onEnded = captureOnEnded
+            closeCapture()
+            onCaptured?.invoke(label)
+            onEnded?.invoke("caught")
+        } catch (_: Exception) {
+            // A malformed or dead node: drop this click, the user may tap again.
+        }
     }
 
     override fun onInterrupt() {}
@@ -140,18 +167,16 @@ class DoorbellClickService : AccessibilityService() {
      *  card you tap in [pkg] is reported through [onCaptured], and the
      *  window's end through [onEnded] ("caught", "timeout", "stopped" or
      *  "service_off"). A second call replaces the first window, which ends
-     *  with "stopped". Main thread only. */
+     *  silently: a "stopped" report here would read in Dart as the new
+     *  window's end. The event filter widens to [pkg] for the window,
+     *  saved or not. Main thread only. */
     fun startCapture(
         pkg: String,
         seconds: Int,
         onCaptured: (String) -> Unit,
         onEnded: (String) -> Unit,
     ) {
-        if (captureOpen) {
-            val replaced = captureOnEnded
-            closeCapture()
-            replaced?.invoke("stopped")
-        }
+        if (captureOpen) closeCapture()
         captureToken++
         captureOpen = true
         capturePkg = pkg
@@ -168,6 +193,7 @@ class DoorbellClickService : AccessibilityService() {
             },
             seconds.coerceIn(10, 180) * 1000L,
         )
+        applyScope()
     }
 
     /** End the open capture window, if any, with "stopped". Main thread
@@ -187,12 +213,16 @@ class DoorbellClickService : AccessibilityService() {
         capturePkg = null
         captureOnCaptured = null
         captureOnEnded = null
+        applyScope()
     }
 
     /** Start a click job: after [delayMs] (the launch settling), poll
      *  [pkg]'s window every 250 ms for [windowMs] for the card whose label
-     *  is [label], and click it. One job at a time; a new job cancels the
-     *  old one silently. Main thread only. */
+     *  is [label], and click it. [pkg] must be one of the saved
+     *  [packages]: one that is not is refused at once with "not_found"
+     *  and nothing is scheduled. One job at a time; a new job cancels the
+     *  old one, which reports nothing: the new ring supersedes it. Main
+     *  thread only. */
     fun startClick(
         pkg: String,
         label: String,
@@ -200,7 +230,13 @@ class DoorbellClickService : AccessibilityService() {
         windowMs: Long,
         onResult: (String) -> Unit,
     ) {
+        if (pkg !in packages) {
+            Log.w(TAG, "click: package not saved")
+            onResult("not_found")
+            return
+        }
         cancelClick()
+        jobOnResult = onResult
         val token = jobToken
         main.postDelayed({ pollClick(token, pkg, label, windowMs, onResult) }, delayMs)
     }
@@ -212,9 +248,11 @@ class DoorbellClickService : AccessibilityService() {
     }
 
     /** Main thread only. The job's poll loop: one [NodeWalker] walk per
-     *  250 ms tick until the card is clicked or the window runs out. Only
-     *  the root is recycled, once per tick, after the tick is done with
-     *  it; below 33 the nodes the wrapper read die with it. */
+     *  250 ms tick until the card is clicked or the window runs out. A
+     *  tick that throws is treated as not clicked. Only the root is
+     *  recycled, once per tick, after the tick is done with it; the
+     *  nodes the walk read through getChild and getParent are left to
+     *  the garbage collector. */
     @Suppress("DEPRECATION")
     private fun pollClick(
         token: Int,
@@ -239,21 +277,25 @@ class DoorbellClickService : AccessibilityService() {
                     return
                 }
                 var clicked = false
-                val root = rootInActiveWindow
-                if (root == null || root.packageName?.toString() != pkg) {
-                    // The doorbell app does not have the screen yet.
-                    sawOtherApp = true
-                } else {
-                    sawRightApp = true
-                    val target =
-                        NodeWalker.findClickTarget(NodeAdapter(root), label) as? NodeAdapter
-                    if (target != null &&
-                        target.info.performAction(AccessibilityNodeInfo.ACTION_CLICK)
-                    ) {
-                        clicked = true
+                try {
+                    val root = rootInActiveWindow
+                    if (root == null || root.packageName?.toString() != pkg) {
+                        // The doorbell app does not have the screen yet.
+                        sawOtherApp = true
+                    } else {
+                        sawRightApp = true
+                        val target =
+                            NodeWalker.findClickTarget(NodeAdapter(root), label) as? NodeAdapter
+                        if (target != null &&
+                            target.info.performAction(AccessibilityNodeInfo.ACTION_CLICK)
+                        ) {
+                            clicked = true
+                        }
                     }
+                    if (Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU) root?.recycle()
+                } catch (e: Exception) {
+                    Log.w(TAG, "click poll failed: ${e.javaClass.simpleName}")
                 }
-                if (Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU) root?.recycle()
                 if (clicked) {
                     reportClick(label, "clicked", onResult)
                     return
@@ -264,9 +306,11 @@ class DoorbellClickService : AccessibilityService() {
         tick.run()
     }
 
-    /** Main thread only. Report [result] for the job labelled [label]; the
-     *  label is the only screen text this service ever logs. */
+    /** Main thread only. Report [result] for the job labelled [label] and
+     *  end the job: its callback is forgotten first, so it never reports
+     *  twice. The label is the only screen text this service ever logs. */
     private fun reportClick(label: String, result: String, onResult: (String) -> Unit) {
+        jobOnResult = null
         Log.i(TAG, "click '$label': $result")
         onResult(result)
     }
