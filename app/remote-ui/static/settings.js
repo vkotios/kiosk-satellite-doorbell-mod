@@ -51,6 +51,7 @@ import { renderUrlFilterPage } from './url_filter.js';
 import { renderPluginScreensaverEntry } from './plugins.js';
 import { askImportOptions } from './pickers.js';
 import { settingRow, syncGatedRows } from './rows.js';
+import { renderDoorbellTab } from './doorbell.js';
 import { applySubpageView, currentPath, setCurrentPath, subpageEntry, refreshNavigationText } from './tabs.js';
 import { showScanDiagnostic, showWatchedEntities } from './views.js';
 import {
@@ -629,7 +630,16 @@ async function renderSettings({ cached = false } = {}) {
     byKey['ha.token']?.value === '__set__';
 
   const byCat = {};
-  settings.filter(visible).forEach((s) => (byCat[s.category] ??= []).push(s));
+  settings.filter(visible).forEach((s) => {
+    // The Doorbell tab draws its own two sections (doorbell.js), each
+    // rendering its switch, grant and timing rows through the same
+    // settingRow() this path uses: the generic render hands the
+    // category over, keeping the tab's slot so no empty-state card
+    // shows in its place.
+    if (s.category === 'Doorbell') return;
+    (byCat[s.category] ??= []).push(s);
+  });
+  if (settings.some((s) => s.category === 'Doorbell' && visible(s))) byCat.Doorbell = [];
 
 
   // `handBuilt` names the second-level pages whose cards the caller supplies:
@@ -901,41 +911,17 @@ async function renderSettings({ cached = false } = {}) {
       sync();
     }
 
-    // The Doorbell's group answers for two grants: the notification
-    // access its rings arrive as, and the Accessibility service that
-    // taps the camera app's card. It shows only while the doorbell is
-    // switched on, following the toggle in place like the Launcher's
-    // group above.
-    {
-      const doorbellGroup = group('tab-doorbell', [
-        permRow('Notification access',
-          'The doorbell sees the rings the doorbell app announces.',
-          'Without this the doorbell sees no rings and never opens its '
-            + 'app. The grant screen appears on the tablet.',
-          'Grant on device', grantNotifications, pollNotifications),
-        permRow('Doorbell click access',
-          'The kiosk can tap your doorbell camera.',
-          'Without this the kiosk cannot tap the camera. Turn it on in '
-            + 'Android Accessibility settings on the tablet (find Kiosk '
-            + 'Satellite there).',
-          'Open on device', openClickSettings, pollClickAccess),
-      ]);
-      const tab = document.getElementById('tab-doorbell');
-      const on = () => {
-        const cb = tab.querySelector(
-          '[data-key="doorbell.enabled"] input[type="checkbox"]');
-        return !!cb && cb.checked;
-      };
-      const sync = () => doorbellGroup.forEach((el) =>
-        el.classList.toggle('hidden', !on()));
-      // Delegated like the Launcher's, so the toggle is followed in
-      // place whether the tab rebuilds around it or not.
-      tab.addEventListener('change', (e) => {
-        const key = e.target.closest?.('[data-key]')?.dataset.key;
-        if (key === 'doorbell.enabled') setTimeout(sync, 50);
-      });
-      sync();
-    }
+    // The Doorbell tab's two sections (doorbell.js): each with its own
+    // switch, grant row, timing rows and doorbells, following its own
+    // switch in place. The grant rows are the shared permRow, passed
+    // in with the notification and click-access polls it draws with.
+    renderDoorbellTab({
+      permRow,
+      grantNotifications,
+      pollNotifications,
+      openClickSettings,
+      pollClickAccess,
+    });
 
     // ── Home Launcher status (issue #219) ────────────────────────────────
     // The toggle above is intent; on devices without device ownership the
