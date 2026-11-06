@@ -169,6 +169,24 @@ Future<bool> showDoorbellNotificationDialog(
     });
   }
 
+  // Whether the Eufy Security preset is already saved, read before the
+  // dialog is shown: the choose screen offers the preset only while no
+  // saved doorbell already has its package.
+  var eufyAdded = false;
+  final existing = await container.commands.execute(
+    'doorbellSignatures',
+    const {},
+  );
+  if (existing.ok && existing.data is List) {
+    final data = existing.data as List;
+    eufyAdded = data.whereType<Map>().any(
+      (entry) => '${entry['package'] ?? ''}' == eufySignature.package,
+    );
+  }
+
+  // The page can be gone by the time the saved doorbells are read.
+  if (!context.mounted) return false;
+
   await showDialog<void>(
     context: context,
     builder: (context) => StatefulBuilder(
@@ -361,13 +379,22 @@ Future<bool> showDoorbellNotificationDialog(
                       padding: const EdgeInsets.only(top: 8),
                       child: Wrap(
                         spacing: 8,
+                        crossAxisAlignment: WrapCrossAlignment.center,
                         children: [
-                          TextButton(
-                            onPressed: busy || !enabled
-                                ? null
-                                : () => unawaited(addEufy(context, setState)),
-                            child: const Text('Eufy Security'),
-                          ),
+                          if (eufyAdded)
+                            Text(
+                              'Eufy Security is already added.',
+                              style: small,
+                            )
+                          else
+                            TextButton(
+                              onPressed: busy || !enabled
+                                  ? null
+                                  : () => unawaited(
+                                      addEufy(context, setState),
+                                    ),
+                              child: const Text('Eufy Security'),
+                            ),
                           TextButton(
                             onPressed: busy || !enabled
                                 ? null
