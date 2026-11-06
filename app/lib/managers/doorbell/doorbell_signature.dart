@@ -1,9 +1,11 @@
 import 'dart:convert';
 
-/// One doorbell camera the kiosk answers a ring from: a notification
-/// (the Android package and the channel prefix a ring arrives on), a
-/// Home Assistant entity, or both; how a ring opens; and the label
-/// the UI shows.
+/// One doorbell camera the kiosk answers a ring from, in exactly one
+/// of the two Doorbell sections: a notification doorbell (the Android
+/// package and the channel prefix a ring arrives on, opened by the
+/// notification's own tap action) or a sensor & tap doorbell (a Home
+/// Assistant entity, opened by launching the app and clicking the
+/// taught [clickLabel] card); plus the label the UI shows.
 class DoorbellSignature {
   const DoorbellSignature({
     required this.id,
@@ -38,8 +40,14 @@ class DoorbellSignature {
   /// The card a 'click' ring opens, e.g. 'Front door'.
   final String clickLabel;
 
-  /// Whether a ring notification can ring this doorbell.
-  bool get rungByNotification => channelPrefix.isNotEmpty;
+  /// Whether this is a sensor & tap doorbell: a Home Assistant entity
+  /// rings it, and a ring opens by clicking its [clickLabel] card.
+  bool get isSensor => entity.isNotEmpty;
+
+  /// Whether this is a notification doorbell: no entity, a ring
+  /// arrives as its app's notification on [channelPrefix], and a ring
+  /// opens by the notification's own tap action.
+  bool get isNotification => !isSensor && channelPrefix.isNotEmpty;
 
   /// Whether a Home Assistant entity can ring this doorbell.
   bool get rungByEntity => entity.isNotEmpty;
@@ -81,15 +89,14 @@ String? normalizeDoorbellEntity(String raw) {
 /// trimmed, an entity that is not an entity id (see
 /// [normalizeDoorbellEntity]) is treated as having none, and an entry
 /// that is not a map or whose id or package is empty is dropped, as is
-/// one nothing can ring (neither channelPrefix nor entity), one a Home
-/// Assistant ring could not open (an entity without a clickLabel), and
-/// one only a click could open (a click open without a clickLabel and
-/// no channelPrefix). A missing or empty label falls back to the
-/// package, 'open' is 'click' whenever a Home Assistant entity rings
-/// the doorbell, whatever was saved, and otherwise only when stored
-/// as exactly that and taught a clickLabel (a notification doorbell
-/// without one opens by the tap), and the first of two entries
-/// sharing an id wins.
+/// one nothing can ring (neither channelPrefix nor entity) and one a
+/// Home Assistant ring could not open (an entity without a clickLabel).
+/// A missing or empty label falls back to the package. An entry with
+/// an entity is a sensor & tap doorbell: it opens by the click,
+/// whatever was saved, and keeps a stored channelPrefix unused. An
+/// entry without an entity is a notification doorbell: it opens by
+/// the tap and carries no clickLabel, whatever was saved. The first
+/// of two entries sharing an id wins.
 List<DoorbellSignature> decodeDoorbellSignatures(String json) {
   try {
     final raw = jsonDecode(json);
@@ -103,16 +110,9 @@ List<DoorbellSignature> decodeDoorbellSignatures(String json) {
       final channelPrefix = '${item['channelPrefix'] ?? ''}'.trim();
       final entity = normalizeDoorbellEntity('${item['entity'] ?? ''}') ?? '';
       final clickLabel = '${item['clickLabel'] ?? ''}'.trim();
-      final open =
-          '${item['open'] ?? ''}'.trim() == 'click' ? 'click' : 'tap';
       if (id.isEmpty || package.isEmpty) continue;
       if (channelPrefix.isEmpty && entity.isEmpty) continue;
       if (entity.isNotEmpty && clickLabel.isEmpty) continue;
-      // A click open without a clickLabel cannot work; a doorbell a
-      // notification still rings is kept, opening by the tap instead.
-      if (open == 'click' && clickLabel.isEmpty && channelPrefix.isEmpty) {
-        continue;
-      }
       if (!seen.add(id)) continue;
       var label = '${item['label'] ?? ''}'.trim();
       if (label.isEmpty) label = package;
@@ -123,12 +123,12 @@ List<DoorbellSignature> decodeDoorbellSignatures(String json) {
           package: package,
           channelPrefix: channelPrefix,
           entity: entity,
-          // A Home Assistant ring always opens by click, whatever was
-          // saved; an entity doorbell has a clickLabel or was dropped.
-          open: entity.isNotEmpty || (open == 'click' && clickLabel.isNotEmpty)
-              ? 'click'
-              : 'tap',
-          clickLabel: clickLabel,
+          // A sensor & tap doorbell always opens by click, whatever
+          // was saved; a notification doorbell always by the tap.
+          open: entity.isNotEmpty ? 'click' : 'tap',
+          // A notification doorbell has no card to click: a stored
+          // clickLabel is dropped.
+          clickLabel: entity.isNotEmpty ? clickLabel : '',
         ),
       );
     }

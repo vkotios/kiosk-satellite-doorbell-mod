@@ -1482,10 +1482,12 @@ const launcherMenu = SettingDef<bool>(
   linksTo: 'ui.drawer_items',
 );
 
-// A doorbell that rings in another app (Eufy Security today): a ring
-// arrives as the app's notification or as a Home Assistant entity
-// turning on, and the kiosk opens the camera that rang by tapping the
-// notification or by clicking the taught card, after which the
+// The Doorbell page has two independent sections, each with its own
+// switch, its own settings and its own doorbells. A doorbell belongs to
+// exactly one: a notification doorbell (no entity) rings as its app's
+// notification and opens by tapping it; a sensor & tap doorbell (an
+// entity) rings when its Home Assistant entity turns on and opens by
+// launching the app and clicking the taught card. After an open the
 // launcher's auto-return brings the kiosk back. The first needs the
 // Notification access grant, the same as the media session source; the
 // second the Doorbell click access grant.
@@ -1493,12 +1495,11 @@ const doorbellEnabled = SettingDef<bool>(
   key: 'doorbell.enabled',
   type: SettingType.boolean,
   defaultValue: false,
-  title: 'Open the doorbell app on a ring',
+  title: 'Doorbell video launch by notifications',
   description:
-      'When a doorbell rings, as a notification or as a Home Assistant '
-      'entity turning on, open its live view over the kiosk: by tapping '
-      'the notification (Notification access) or by clicking the taught '
-      'card (Doorbell click access).',
+      'When a doorbell rings as its app\'s notification, open its live '
+      'view over the kiosk by tapping the notification (Notification '
+      'access).',
   category: 'Doorbell',
 );
 
@@ -1515,6 +1516,36 @@ const doorbellReturnSeconds = SettingDef<num>(
   dependsOn: 'doorbell.enabled',
 );
 
+// The sensor & tap section's switch, independent of the notification
+// one above: both sections can be on at once, for doorbells with
+// different characteristics.
+const doorbellSensorEnabled = SettingDef<bool>(
+  key: 'doorbell.sensor_enabled',
+  type: SettingType.boolean,
+  defaultValue: false,
+  title: 'Doorbell video launch by Home Assistant sensor & tap',
+  description:
+      'When a doorbell\'s Home Assistant sensor turns on, open its live '
+      'view over the kiosk by launching the doorbell app and tapping the '
+      'taught card (Doorbell click access).',
+  category: 'Doorbell',
+);
+
+// The sensor & tap section's own return time, separate from the
+// notification section's doorbell.return_seconds.
+const doorbellSensorReturnSeconds = SettingDef<num>(
+  key: 'doorbell.sensor_return_seconds',
+  type: SettingType.number,
+  defaultValue: 75,
+  min: 10,
+  title: 'Return after a ring (seconds)',
+  description:
+      'Time without a touch in the doorbell app before the kiosk comes '
+      'back.',
+  category: 'Doorbell',
+  dependsOn: 'doorbell.sensor_enabled',
+);
+
 const doorbellClickDelaySeconds = SettingDef<num>(
   key: 'doorbell.click_delay_seconds',
   type: SettingType.number,
@@ -1525,13 +1556,15 @@ const doorbellClickDelaySeconds = SettingDef<num>(
       'How long after the doorbell app opens the kiosk waits before it '
       'taps the camera. A slow tablet or a slow app needs longer.',
   category: 'Doorbell',
-  dependsOn: 'doorbell.enabled',
+  dependsOn: 'doorbell.sensor_enabled',
 );
 
-// The doorbells as a JSON list of {id, label, package, channelPrefix,
-// entity, open, clickLabel} (see doorbell_signature.dart), where entity
-// and clickLabel are optional: a string holding a JSON list, like
-// launcher.apps, decoded tolerantly on read.
+// The doorbells of both sections as a JSON list of {id, label, package,
+// channelPrefix, entity, open, clickLabel} (see doorbell_signature.dart):
+// a notification doorbell holds a channelPrefix, a sensor & tap doorbell
+// an entity and a clickLabel. A string holding a JSON list, like
+// launcher.apps, decoded tolerantly on read. No dependsOn: each section
+// lists its own doorbells whatever the switches say.
 const doorbellSignatures = SettingDef<String>(
   key: 'doorbell.signatures',
   type: SettingType.string,
@@ -1539,7 +1572,22 @@ const doorbellSignatures = SettingDef<String>(
   title: 'Doorbells',
   description: 'The doorbells: how each rings and opens.',
   category: 'Doorbell',
-  dependsOn: 'doorbell.enabled',
+);
+
+// The last activity of every saved doorbell as a JSON map of signature
+// id to {at, kind, result, detail} (see doorbell_status.dart): what the
+// status text of both Doorbell UIs is built from. Internal state, not a
+// preference, declared like the other internal settings: never a
+// settings row, never synced to another kiosk.
+const doorbellActivity = SettingDef<String>(
+  key: 'internal.doorbell_activity',
+  type: SettingType.string,
+  defaultValue: '{}',
+  title: 'Doorbell activity',
+  description: 'The last ring or test of each saved doorbell.',
+  category: 'Doorbell',
+  hidden: true,
+  perDevice: true,
 );
 
 // ── Home Launcher ──────────────────────────────────────────────────────
@@ -13270,8 +13318,11 @@ const List<SettingDef<Object>> allSettings = [
   launcherMenu,
   doorbellEnabled,
   doorbellReturnSeconds,
+  doorbellSensorEnabled,
+  doorbellSensorReturnSeconds,
   doorbellClickDelaySeconds,
   doorbellSignatures,
+  doorbellActivity,
   // The Screen & Audio page: screen first, then the volume mixer, then the
   // hand-built device pickers, then capture tuning. Both UIs render this
   // category in this order.

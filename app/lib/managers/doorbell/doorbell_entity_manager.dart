@@ -14,9 +14,9 @@ import 'doorbell_manager.dart';
 /// entity turns on ring through DoorbellManager.ringFromEntity, which
 /// wakes the screen, opens the doorbell app by click and tells Home
 /// Assistant. The entities are watched over a subscription of this app's
-/// own, open only while the doorbell setting is on and a saved doorbell
-/// has an entity, so Home Assistant sends those entities and nothing
-/// else.
+/// own, open only while the sensor & tap section's switch is on and a
+/// saved doorbell has an entity, so Home Assistant sends those entities
+/// and nothing else.
 ///
 /// A state rings the way the motion manager's entity moves: only a turn
 /// on rings. The first state after the subscription opens never does
@@ -62,10 +62,10 @@ class DoorbellEntityManager extends Manager {
   bool _warnedState = false;
 
   /// The entities to watch: the distinct entities of the saved doorbells
-  /// a Home Assistant entity can ring, and only while the doorbell
-  /// setting is on.
+  /// a Home Assistant entity can ring, and only while the sensor &
+  /// tap section's switch is on.
   Set<String> get _entities {
-    if (!_settings.get(defs.doorbellEnabled)) return {};
+    if (!_settings.get(defs.doorbellSensorEnabled)) return {};
     return {
       for (final signature in _doorbell.doorbells)
         if (signature.rungByEntity) signature.entity,
@@ -78,7 +78,7 @@ class DoorbellEntityManager extends Manager {
       bus.on<SettingChanged>().listen((e) {
         // Another server or token: the open socket is the old one's.
         if (e.key == defs.haUrl.key || e.key == defs.haToken.key) _close();
-        if (e.key == defs.doorbellEnabled.key ||
+        if (e.key == defs.doorbellSensorEnabled.key ||
             e.key == defs.doorbellSignatures.key ||
             e.key == defs.haUrl.key ||
             e.key == defs.haToken.key) {
