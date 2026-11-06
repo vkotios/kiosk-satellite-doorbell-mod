@@ -7,23 +7,26 @@ import '../core/command_registry.dart';
 import '../managers/doorbell/doorbell_signature.dart';
 import '../managers/doorbell/doorbell_manager.dart' show DoorbellCapture;
 import '../managers/settings/definitions.dart' show doorbellEnabled;
-import 'doorbell_click_dialog.dart';
 import 'toast.dart';
 
-/// The Doorbell page: the saved doorbells, each with a Remove and
-/// a Test open, a one-tap Add Eufy Security below the list, the
-/// capture that waits for another doorbell's ring notification and
-/// saves it as one more doorbell, and the camera doorbell wizard
-/// that saves one that opens by a tap on its card. The list is the
-/// manager's, read and changed through its commands so the native
-/// listener stays in step.
-Future<void> showDoorbellDialog(
+/// The notifications section's Add doorbell flow: one dialog, three
+/// screens. Choose the Eufy Security preset or learn from a real ring;
+/// a learned ring is named and saved; the saved screen says the first
+/// ring will tell whether it works. Returns true when a doorbell was
+/// saved. The notifications switch must be on: the Add button only
+/// exists while its section is.
+Future<bool> showDoorbellNotificationDialog(
   BuildContext context,
   AppContainer container,
 ) async {
-  // The saved doorbells the list shows, reloaded after every change.
-  var signatures = <Map>[];
-  var loaded = false;
+  // Whether a doorbell was saved: the dialog's answer.
+  var saved = false;
+
+  // The name the saved screen names.
+  var savedName = '';
+
+  // Which screen is up: choose, learn or saved.
+  var step = 'choose';
 
   // One command at a time: while one runs, the buttons that start
   // commands are disabled, so a double tap cannot add a doorbell twice.
@@ -73,66 +76,8 @@ Future<void> showDoorbellDialog(
     }
   }
 
-  // The list from the manager; a failed read keeps the list on screen,
-  // and entries that are not maps are skipped.
-  Future<void> reload(BuildContext dialogContext, StateSetter setState) async {
-    final result = await runCommand(
-      dialogContext,
-      setState,
-      'doorbellSignatures',
-      const {},
-    );
-    if (result == null || !dialogContext.mounted) return;
-    if (!result.ok) {
-      _toastFailure(dialogContext, result.error);
-      return;
-    }
-    setState(() {
-      signatures = result.ok && result.data is List
-          ? (result.data as List).whereType<Map>().toList()
-          : <Map>[];
-    });
-  }
-
-  // Forget one saved doorbell, then reload the list to match.
-  Future<void> remove(
-    BuildContext dialogContext,
-    StateSetter setState,
-    String id,
-  ) async {
-    final result = await runCommand(
-      dialogContext,
-      setState,
-      'doorbellRemoveSignature',
-      {'id': id},
-    );
-    if (result == null || !dialogContext.mounted) return;
-    if (!result.ok) {
-      _toastFailure(dialogContext, result.error);
-      return;
-    }
-    await reload(dialogContext, setState);
-  }
-
-  // Open one saved doorbell the way a ring would, to check that
-  // it still opens.
-  Future<void> testOpen(
-    BuildContext dialogContext,
-    StateSetter setState,
-    String id,
-  ) async {
-    final result = await runCommand(
-      dialogContext,
-      setState,
-      'doorbellTestOpen',
-      {'id': id},
-    );
-    if (result == null || result.ok || !dialogContext.mounted) return;
-    _toastFailure(dialogContext, result.error);
-  }
-
   // Save the Eufy Security app, the doorbell this feature was built
-  // against, then reload the list to match.
+  // against, then the saved screen.
   Future<void> addEufy(
     BuildContext dialogContext,
     StateSetter setState,
@@ -152,18 +97,9 @@ Future<void> showDoorbellDialog(
       _toastFailure(dialogContext, result.error);
       return;
     }
-    await reload(dialogContext, setState);
-  }
-
-  // Run the camera doorbell wizard, then reload the list when it
-  // saved one.
-  Future<void> addCameraDoorbell(
-    BuildContext dialogContext,
-    StateSetter setState,
-  ) async {
-    final saved = await showDoorbellClickDialog(dialogContext, container);
-    if (!saved || !dialogContext.mounted) return;
-    await reload(dialogContext, setState);
+    saved = true;
+    savedName = eufySignature.label;
+    setState(() => step = 'saved');
   }
 
   // Start catching the next doorbell notification: the dialog waits
@@ -172,7 +108,10 @@ Future<void> showDoorbellDialog(
     BuildContext dialogContext,
     StateSetter setState,
   ) async {
-    setState(() => started = true);
+    setState(() {
+      started = true;
+      step = 'learn';
+    });
     final result = await runCommand(
       dialogContext,
       setState,
@@ -199,54 +138,43 @@ Future<void> showDoorbellDialog(
     if (dialogContext.mounted) setState(() => started = false);
   }
 
-  // Save the caught notification as one more doorbell, then back to
-  // the list.
+  // Save the caught notification as one more doorbell, then the
+  // saved screen.
   Future<void> save(BuildContext dialogContext, StateSetter setState) async {
     final caught = container.doorbell.captured.value;
     if (caught == null) return;
     final name = nameController.text.trim();
+    final label = name.isEmpty ? caught.appLabel : name;
     final result = await runCommand(
       dialogContext,
       setState,
       'doorbellAddSignature',
       {
-        'label': name.isEmpty ? caught.appLabel : name,
+        'label': label,
         'package': caught.package,
         'channelPrefix': caught.channelPrefix,
       },
     );
-    if (result == null) return;
-    if (!dialogContext.mounted) return;
+    if (result == null || !dialogContext.mounted) return;
     if (!result.ok) {
       _toastFailure(dialogContext, result.error);
       return;
     }
     container.doorbell.captured.value = null;
-    setState(() => started = false);
-    await reload(dialogContext, setState);
+    saved = true;
+    savedName = label;
+    setState(() {
+      started = false;
+      step = 'saved';
+    });
   }
 
   await showDialog<void>(
     context: context,
     builder: (context) => StatefulBuilder(
       builder: (context, setState) {
-        // The list loads once, when the dialog first builds. The
-        // load is a command too, so it goes through the wrapper,
-        // whose setState must not run inside this build.
-        if (!loaded) {
-          loaded = true;
-          unawaited(
-            Future<void>.delayed(Duration.zero, () async {
-              if (!context.mounted) return;
-              await reload(context, setState);
-            }),
-          );
-        }
-        final hasEufy = signatures.any(
-          (signature) => signature['package'] == eufySignature.package,
-        );
         return AlertDialog(
-          title: const Text('Doorbells'),
+          title: const Text('Add a doorbell'),
           content: SizedBox(
             width: 420,
             child: ListenableBuilder(
@@ -269,54 +197,29 @@ Future<void> showDoorbellDialog(
                   nameController.text = caught.appLabel;
                 }
                 if (caught == null) namedFor = null;
-                // One saved doorbell's row: what it rings and what
-                // opens, a Test open for one that opens by a click,
-                // and the Remove.
-                Widget row(Map signature) {
-                  final clickLabel = '${signature['clickLabel'] ?? ''}'.trim();
-                  return ListTile(
-                    title: Text(
-                      '${signature['label'] ?? signature['id'] ?? ''}',
-                    ),
-                    subtitle: Text(_ringSubtitle(signature), style: small),
-                    trailing: Row(
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        if (clickLabel.isNotEmpty)
-                          IconButton(
-                            tooltip: 'Test open',
-                            icon: const Icon(Icons.play_arrow_outlined),
-                            onPressed: busy
-                                ? null
-                                : () => unawaited(
-                                      testOpen(
-                                        context,
-                                        setState,
-                                        '${signature['id']}',
-                                      ),
-                                    ),
-                          ),
-                        IconButton(
-                          tooltip: 'Remove',
-                          icon: const Icon(Icons.delete_outline),
-                          onPressed: busy
-                              ? null
-                              : () => unawaited(
-                                    remove(
-                                      context,
-                                      setState,
-                                      '${signature['id']}',
-                                    ),
-                                  ),
+                // The saved screen: the flow's answer.
+                if (step == 'saved') {
+                  return Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      const Text('Saved.'),
+                      Padding(
+                        padding: const EdgeInsets.only(top: 4),
+                        child: Text(
+                          '$savedName is added. The first ring will show '
+                          'here as "Working".',
+                          style: small,
                         ),
-                      ],
-                    ),
+                      ),
+                    ],
                   );
                 }
-                return ListView(
-                  shrinkWrap: true,
-                  children: [
-                    if (caught != null) ...[
+                // The caught screen: name the notification and save it.
+                if (caught != null) {
+                  return ListView(
+                    shrinkWrap: true,
+                    children: [
                       Text('Caught a notification from ${caught.appLabel}.'),
                       if (caught.title.isNotEmpty)
                         Padding(
@@ -366,14 +269,25 @@ Future<void> showDoorbellDialog(
                                   ? null
                                   : () {
                                       container.doorbell.captured.value = null;
-                                      setState(() => started = false);
+                                      setState(() {
+                                        started = false;
+                                        step = 'choose';
+                                      });
                                     },
                               child: const Text('Cancel'),
                             ),
                           ],
                         ),
                       ),
-                    ] else if (capturing) ...[
+                    ],
+                  );
+                }
+                // The waiting screen: the capture runs.
+                if (capturing) {
+                  return Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
                       const Text('Press your doorbell now.'),
                       Padding(
                         padding: const EdgeInsets.symmetric(vertical: 8),
@@ -391,13 +305,19 @@ Future<void> showDoorbellDialog(
                         child: TextButton(
                           onPressed: busy
                               ? null
-                              : () => unawaited(
-                                    stopCapture(context, setState),
-                                  ),
+                              : () => unawaited(stopCapture(context, setState)),
                           child: const Text('Cancel'),
                         ),
                       ),
-                    ] else if (started) ...[
+                    ],
+                  );
+                }
+                // The timed-out screen: nothing arrived in time.
+                if (started) {
+                  return Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
                       const Text('No notification arrived in time.'),
                       Padding(
                         padding: const EdgeInsets.only(top: 12),
@@ -408,66 +328,82 @@ Future<void> showDoorbellDialog(
                               onPressed: busy
                                   ? null
                                   : () => unawaited(
-                                        startCapture(context, setState),
-                                      ),
+                                      startCapture(context, setState),
+                                    ),
                               child: const Text('Try again'),
                             ),
                             TextButton(
                               onPressed: busy
                                   ? null
-                                  : () => setState(() => started = false),
+                                  : () => setState(() {
+                                      started = false;
+                                      step = 'choose';
+                                    }),
                               child: const Text('Cancel'),
                             ),
                           ],
                         ),
                       ),
-                    ] else ...[
-                      if (signatures.isEmpty)
-                        const Padding(
-                          padding: EdgeInsets.symmetric(vertical: 12),
-                          child: Text('No doorbell saved yet.'),
-                        ),
-                      for (final signature in signatures) row(signature),
-                      if (!hasEufy)
-                        TextButton(
-                          onPressed: busy
-                              ? null
-                              : () => unawaited(addEufy(context, setState)),
-                          child: const Text('Add Eufy Security'),
-                        ),
-                      TextButton(
-                        onPressed: busy || !enabled
-                            ? null
-                            : () => unawaited(
-                                addCameraDoorbell(context, setState),
-                              ),
-                        child: const Text('Add a camera doorbell'),
-                      ),
-                      TextButton(
-                        onPressed: busy || !enabled
-                            ? null
-                            : () => unawaited(startCapture(context, setState)),
-                        child: const Text('Capture a doorbell'),
-                      ),
-                      if (!enabled)
-                        Padding(
-                          padding: const EdgeInsets.only(top: 4),
-                          child: Text(
-                            'Turn on "Open the doorbell app on a ring" first.',
-                            style: small,
-                          ),
-                        ),
                     ],
+                  );
+                }
+                // The choose screen: the preset or the learn flow.
+                return Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Text(
+                      'Add the Eufy Security preset, or learn this doorbell '
+                      'from a real ring.',
+                      style: small,
+                    ),
+                    Padding(
+                      padding: const EdgeInsets.only(top: 8),
+                      child: Wrap(
+                        spacing: 8,
+                        children: [
+                          TextButton(
+                            onPressed: busy || !enabled
+                                ? null
+                                : () => unawaited(addEufy(context, setState)),
+                            child: const Text('Eufy Security'),
+                          ),
+                          TextButton(
+                            onPressed: busy || !enabled
+                                ? null
+                                : () => unawaited(
+                                    startCapture(context, setState),
+                                  ),
+                            child: const Text('Learn from a ring'),
+                          ),
+                        ],
+                      ),
+                    ),
+                    if (!enabled)
+                      Padding(
+                        padding: const EdgeInsets.only(top: 4),
+                        child: Text(
+                          'Turn on Doorbell video launch by notifications '
+                          'first.',
+                          style: small,
+                        ),
+                      ),
                   ],
                 );
               },
             ),
           ),
           actions: [
-            TextButton(
-              onPressed: () => Navigator.pop(context),
-              child: const Text('Close'),
-            ),
+            if (step == 'saved')
+              TextButton(
+                onPressed: () => Navigator.pop(context),
+                child: const Text('Done'),
+              )
+            else
+              TextButton(
+                onPressed: () => Navigator.pop(context),
+                child: const Text('Close'),
+              ),
           ],
         );
       },
@@ -479,7 +415,7 @@ Future<void> showDoorbellDialog(
   // error. Whatever a running capture caught is forgotten and
   // the capture ends. A command still in flight is awaited
   // first, so it finishes (and its setting is saved) before the
-  // settings page rebuilds its Doorbells row.
+  // caller reloads the list.
   final pending = running;
   if (pending != null) {
     try {
@@ -491,24 +427,7 @@ Future<void> showDoorbellDialog(
     await runCommand(null, null, 'doorbellStopCapture', const {});
   }
   container.doorbell.captured.value = null;
-}
-
-/// What one saved doorbell's row says it rings and opens. A key
-/// an old save lacks reads as empty, never as 'null'.
-String _ringSubtitle(Map signature) {
-  final channel = '${signature['channelPrefix'] ?? ''}'.trim();
-  final entity = '${signature['entity'] ?? ''}'.trim();
-  final clickLabel = '${signature['clickLabel'] ?? ''}'.trim();
-  final opensByClick = '${signature['open'] ?? ''}'.trim() == 'click';
-  if (channel.isEmpty && entity.isEmpty) return 'Rings: nothing yet';
-  final rings = [
-    if (channel.isNotEmpty) 'a notification',
-    if (entity.isNotEmpty) entity,
-  ].join(' and ');
-  final opens = opensByClick && clickLabel.isNotEmpty
-      ? 'the "$clickLabel" card'
-      : 'its notification tap';
-  return 'Rings: $rings. Opens: $opens';
+  return saved;
 }
 
 /// A doorbell command that did not go through, told the way the
