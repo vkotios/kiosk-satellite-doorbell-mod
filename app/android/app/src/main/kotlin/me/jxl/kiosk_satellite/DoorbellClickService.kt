@@ -28,7 +28,8 @@ import android.view.accessibility.AccessibilityNodeInfo
  * [applyScope] keeps Android's event filter at exactly those packages,
  * and [onAccessibilityEvent] drops every other event on its first line.
  * The only text this service ever logs is the saved label, with the
- * job's result.
+ * job's result. The names of the clickable things a failed test
+ * reports to the owner are never logged either.
  */
 class DoorbellClickService : AccessibilityService() {
     companion object {
@@ -77,7 +78,7 @@ class DoorbellClickService : AccessibilityService() {
     // Main thread only: the running job's result callback, so a service
     // that dies mid-job still reports "service_off". Cleared when the
     // job reports; a job replaced by a new startClick reports nothing.
-    private var jobOnResult: ((String) -> Unit)? = null
+    private var jobOnResult: ((String, List<String>) -> Unit)? = null
 
     override fun onServiceConnected() {
         super.onServiceConnected()
@@ -108,7 +109,7 @@ class DoorbellClickService : AccessibilityService() {
         if (onResult != null) {
             jobOnResult = null
             Log.i(TAG, "click: service_off")
-            onResult("service_off")
+            onResult("service_off", emptyList())
         }
         cancelClick()
         if (captureOpen) {
@@ -221,24 +222,29 @@ class DoorbellClickService : AccessibilityService() {
      *  is [label], and click it. [pkg] must be one of the saved
      *  [packages]: one that is not is refused at once with "not_found"
      *  and nothing is scheduled. One job at a time; a new job cancels the
-     *  old one, which reports nothing: the new ring supersedes it. Main
+     *  old one, which reports nothing: the new ring supersedes it. When
+     *  [reportCards] is true, a "not_found" report also carries the
+     *  names of the clickable things the doorbell's window showed, at
+     *  most 12, for the owner who started the test; every other report
+     *  carries an empty list, and the names are never logged. Main
      *  thread only. */
     fun startClick(
         pkg: String,
         label: String,
         delayMs: Long,
         windowMs: Long,
-        onResult: (String) -> Unit,
+        reportCards: Boolean = false,
+        onResult: (String, List<String>) -> Unit,
     ) {
         if (pkg !in packages) {
             Log.w(TAG, "click: package not saved")
-            onResult("not_found")
+            onResult("not_found", emptyList())
             return
         }
         cancelClick()
         jobOnResult = onResult
         val token = jobToken
-        main.postDelayed({ pollClick(token, pkg, label, windowMs, onResult) }, delayMs)
+        main.postDelayed({ pollClick(token, pkg, label, windowMs, reportCards, onResult) }, delayMs)
     }
 
     /** Cancel the running job, if any. It reports nothing. Main thread
@@ -247,33 +253,47 @@ class DoorbellClickService : AccessibilityService() {
         jobToken++
     }
 
-    /** Main thread only. The job's poll loop: one [NodeWalker] walk per
-     *  250 ms tick until the card is clicked or the window runs out. A
-     *  tick that throws is treated as not clicked. Only the root is
-     *  recycled, once per tick, after the tick is done with it; the
-     *  nodes the walk read through getChild and getParent are left to
-     *  the garbage collector. */
+    /** Main thread only. The job's poll loop: one [NodeWalker] search per
+     *  250 ms tick until the card is clicked or the window runs out.
+     *  When [reportCards] is true, the tick that searches the doorbell's
+     *  window also collects its clickable names, and a "not_found"
+     *  report that collected none walks once more. A tick that throws is
+     *  treated as not clicked. Only the root is recycled, once per
+     *  tick, after the tick is done with it; the nodes the walk read
+     *  through getChild and getParent are left to the garbage
+     *  collector. */
     @Suppress("DEPRECATION")
     private fun pollClick(
         token: Int,
         pkg: String,
         label: String,
         windowMs: Long,
-        onResult: (String) -> Unit,
+        reportCards: Boolean,
+        onResult: (String, List<String>) -> Unit,
     ) {
         if (jobToken != token) return
         var sawOtherApp = false
         var sawRightApp = false
+        // The clickable names of the doorbell's window, from the tick
+        // that last searched it; null until a tick collected them.
+        var lastCards: List<String>? = null
         val until = SystemClock.uptimeMillis() + windowMs
         val tick = object : Runnable {
             override fun run() {
                 if (jobToken != token) return
                 if (SystemClock.uptimeMillis() >= until) {
-                    reportClick(
-                        label,
-                        if (sawOtherApp && !sawRightApp) "wrong_app" else "not_found",
-                        onResult,
-                    )
+                    val result = if (sawOtherApp && !sawRightApp) "wrong_app" else "not_found"
+                    // The names come from the tick that last searched the
+                    // doorbell's window; when no tick ever collected them,
+                    // one more walk now is a "not_found" report's only
+                    // chance to name what the window could show.
+                    val cards =
+                        if (reportCards && result == "not_found" && lastCards == null) {
+                            readCards(pkg)
+                        } else {
+                            lastCards ?: emptyList()
+                        }
+                    reportClick(label, result, cards, onResult)
                     return
                 }
                 var clicked = false
@@ -291,13 +311,19 @@ class DoorbellClickService : AccessibilityService() {
                         ) {
                             clicked = true
                         }
+                        if (reportCards && !clicked) {
+                            // The names this window shows, for the report
+                            // if the card never appears; collected in the
+                            // same tick as the search, never logged.
+                            lastCards = NodeWalker.clickableLabels(NodeAdapter(root))
+                        }
                     }
                     if (Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU) root?.recycle()
                 } catch (e: Exception) {
                     Log.w(TAG, "click poll failed: ${e.javaClass.simpleName}")
                 }
                 if (clicked) {
-                    reportClick(label, "clicked", onResult)
+                    reportClick(label, "clicked", emptyList(), onResult)
                     return
                 }
                 main.postDelayed(this, 250)
@@ -306,13 +332,41 @@ class DoorbellClickService : AccessibilityService() {
         tick.run()
     }
 
-    /** Main thread only. Report [result] for the job labelled [label] and
-     *  end the job: its callback is forgotten first, so it never reports
-     *  twice. The label is the only screen text this service ever logs. */
-    private fun reportClick(label: String, result: String, onResult: (String) -> Unit) {
+    /** Main thread only. The clickable names in [pkg]'s window right
+     *  now: the single extra walk a "not_found" report makes when no
+     *  search tick ever collected names, because the doorbell's window
+     *  never came up or the tick that saw it threw first. Empty when
+     *  the window is not [pkg]'s. The names are never logged. */
+    @Suppress("DEPRECATION")
+    private fun readCards(pkg: String): List<String> {
+        return try {
+            val root = rootInActiveWindow
+            val cards =
+                if (root != null && root.packageName?.toString() == pkg) {
+                    NodeWalker.clickableLabels(NodeAdapter(root))
+                } else {
+                    emptyList<String>()
+                }
+            if (Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU) root?.recycle()
+            cards
+        } catch (_: Exception) {
+            emptyList()
+        }
+    }
+
+    /** Main thread only. Report [result] with [cards] for the job labelled
+     *  [label] and end the job: its callback is forgotten first, so it
+     *  never reports twice. The label is the only screen text this
+     *  service ever logs; the card names never reach a log. */
+    private fun reportClick(
+        label: String,
+        result: String,
+        cards: List<String>,
+        onResult: (String, List<String>) -> Unit,
+    ) {
         jobOnResult = null
         Log.i(TAG, "click '$label': $result")
-        onResult(result)
+        onResult(result, cards)
     }
 
     /** The [ClickNode] over a real accessibility node, so [NodeWalker]

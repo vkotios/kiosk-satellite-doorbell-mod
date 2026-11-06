@@ -262,4 +262,91 @@ class NodeWalkerTest {
     @Test fun capturedTextsReturnsAnEmptyListWhenNothingIsFound() {
         assertEquals(emptyList<String>(), NodeWalker.capturedTexts(FakeNode()))
     }
+
+    @Test fun clickableLabelsReturnsTheNamesOfClickableNodesInDocumentOrder() {
+        val root = homeScreen()
+        assertEquals(
+            listOf(
+                "Favorites",
+                "Security",
+                "Doorbell Back Door",
+                "Doorbell Front Door",
+                "Home",
+                "Events",
+            ),
+            NodeWalker.clickableLabels(root),
+        )
+    }
+
+    @Test fun clickableLabelsSkipsClickableNodesWithNoQualifyingText() {
+        val root = FakeNode()
+        val bare = FakeNode(clickable = true)
+        bare.add(FakeNode(text = "99+"))
+        root.add(bare)
+        val named = FakeNode(clickable = true)
+        named.add(FakeNode(text = "Doorbell Front Door"))
+        root.add(named)
+        assertEquals(listOf("Doorbell Front Door"), NodeWalker.clickableLabels(root))
+    }
+
+    @Test fun clickableLabelsSkipsNonClickableNodesWithText() {
+        val root = FakeNode()
+        root.add(FakeNode(text = "Doorbell Front Door"))
+        assertEquals(emptyList<String>(), NodeWalker.clickableLabels(root))
+    }
+
+    @Test fun clickableLabelsCutsEachNameToFortyCharacters() {
+        val root = FakeNode()
+        val card = FakeNode(clickable = true)
+        card.add(FakeNode(text = "Doorbell Front Door 012345678901234567890123456789"))
+        root.add(card)
+        assertEquals(
+            listOf("Doorbell Front Door 01234567890123456789"),
+            NodeWalker.clickableLabels(root),
+        )
+    }
+
+    @Test fun clickableLabelsDedupesCaseInsensitively() {
+        val root = FakeNode()
+        val first = FakeNode(clickable = true)
+        first.add(FakeNode(text = "Doorbell Front Door"))
+        root.add(first)
+        val second = FakeNode(clickable = true)
+        second.add(FakeNode(text = "doorbell   front door"))
+        root.add(second)
+        val third = FakeNode(clickable = true)
+        third.add(FakeNode(text = "Doorbell Back Door"))
+        root.add(third)
+        assertEquals(
+            listOf("Doorbell Front Door", "Doorbell Back Door"),
+            NodeWalker.clickableLabels(root),
+        )
+    }
+
+    @Test fun clickableLabelsStopsAtMax() {
+        val root = FakeNode()
+        for (index in 1..15) {
+            val card = FakeNode(clickable = true)
+            card.add(FakeNode(text = "Camera $index"))
+            root.add(card)
+        }
+        assertEquals((1..12).map { "Camera $it" }, NodeWalker.clickableLabels(root))
+    }
+
+    @Test fun clickableLabelsReturnsAnEmptyListForAnEmptyTree() {
+        assertEquals(emptyList<String>(), NodeWalker.clickableLabels(FakeNode()))
+    }
+
+    @Test fun clickableLabelsStopsDescendingAtDepthForty() {
+        // The walk stops descending at depth 40, so the clickable card 100 levels down is never named.
+        val root = FakeNode()
+        var node = root
+        repeat(99) {
+            val child = FakeNode()
+            node.add(child)
+            node = child
+        }
+        node.add(FakeNode(text = "Doorbell Front Door", clickable = true))
+        assertEquals(emptyList<String>(), NodeWalker.clickableLabels(root))
+    }
 }

@@ -152,7 +152,7 @@ class DoorbellBridge(
     }
 
     /** Send [method] to Dart, which may not be up to take it. */
-    private fun push(method: String, arguments: Map<String, String>) {
+    private fun push(method: String, arguments: Map<String, Any>) {
         try {
             channel.invokeMethod(method, arguments)
         } catch (e: Exception) {
@@ -266,7 +266,11 @@ class DoorbellBridge(
      *  camera card. True when the launch started; the job's result then
      *  arrives as a "clickResult" push, "service_off" at once when the
      *  click service is not enabled. False when there is no launch intent
-     *  or Android refused it. */
+     *  or Android refused it. When the call's "reportCards" is true
+     *  (false by default), a "not_found" result also carries "cards",
+     *  the names of the clickable things the window showed, for the
+     *  owner who started the test; every other result carries an empty
+     *  list. */
     private fun launchAndClick(call: MethodCall): Boolean {
         val pkg = call.argument<String>("package")
             ?: throw IllegalArgumentException("package is required")
@@ -279,6 +283,7 @@ class DoorbellBridge(
                 CLICK_WINDOW_MIN_SECONDS,
                 CLICK_WINDOW_MAX_SECONDS,
             )
+        val reportCards = call.argument<Boolean>("reportCards") ?: false
         val started = launchFresh(pkg)
         if (started) {
             if (DoorbellClickService.running) {
@@ -287,16 +292,27 @@ class DoorbellBridge(
                     label,
                     delaySeconds * 1000,
                     windowSeconds * 1000,
-                ) { r ->
+                    reportCards,
+                ) { r, cards ->
                     push(
                         "clickResult",
-                        mapOf("package" to pkg, "label" to label, "result" to r),
+                        mapOf(
+                            "package" to pkg,
+                            "label" to label,
+                            "result" to r,
+                            "cards" to cards,
+                        ),
                     )
                 }
             } else {
                 push(
                     "clickResult",
-                    mapOf("package" to pkg, "label" to label, "result" to "service_off"),
+                    mapOf(
+                        "package" to pkg,
+                        "label" to label,
+                        "result" to "service_off",
+                        "cards" to emptyList<String>(),
+                    ),
                 )
             }
         }
