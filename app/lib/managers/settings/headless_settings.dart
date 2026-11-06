@@ -116,6 +116,7 @@ class HeadlessSettings {
     defs.lockdownEnabled: false,
     defs.launcherEnabled: false,
     defs.doorbellEnabled: false,
+    defs.doorbellSensorEnabled: false,
     defs.homeLauncherEnabled: false,
     defs.cameraEnabled: false,
     defs.cameraRtspEnabled: false,

@@ -120,6 +120,18 @@ void main() {
       expect(decoded.single.clickLabel, '');
     });
 
+    test('a notification entry loses a stored clickLabel and open click',
+        () {
+      final decoded = decodeDoorbellSignatures(
+        '[{"id":"a","package":"com.a","channelPrefix":"com.a.ring",'
+        '"open":"click","clickLabel":"A"}]',
+      );
+      expect(decoded, hasLength(1));
+      expect(decoded.single.open, 'tap');
+      expect(decoded.single.clickLabel, '');
+      expect(decoded.single.isNotification, isTrue);
+    });
+
     test('drops a click doorbell without a clickLabel and a channel', () {
       final decoded = decodeDoorbellSignatures(
         '[{"id":"a","package":"com.a","entity":"binary_sensor.a",'
@@ -144,7 +156,18 @@ void main() {
       expect(decoded.single.open, 'click');
     });
 
-    test('keeps both triggers together and a click-open doorbell', () {
+    test('a sensor entry keeps a stored channelPrefix, unused', () {
+      final decoded = decodeDoorbellSignatures(
+        '[{"id":"a","package":"com.a","channelPrefix":"com.a.ring",'
+        '"entity":"binary_sensor.a","clickLabel":"A"}]',
+      );
+      expect(decoded.single.isSensor, isTrue);
+      expect(decoded.single.channelPrefix, 'com.a.ring');
+      expect(decoded.single.isNotification, isFalse);
+    });
+
+    test('an entity makes a sensor doorbell, a channel prefix alone a '
+        'notification one', () {
       final decoded = decodeDoorbellSignatures(
         '[{"id":"a","label":"A","package":"com.a",'
         '"channelPrefix":"com.a.ring","entity":"binary_sensor.a",'
@@ -153,12 +176,14 @@ void main() {
         '"channelPrefix":"com.b.ring","open":"click","clickLabel":"B"}]',
       );
       expect(decoded, hasLength(2));
-      expect(decoded[0].rungByNotification, isTrue);
+      expect(decoded[0].isSensor, isTrue);
+      expect(decoded[0].isNotification, isFalse);
       expect(decoded[0].rungByEntity, isTrue);
       expect(decoded[0].opensByClick, isTrue);
-      expect(decoded[1].rungByNotification, isTrue);
+      expect(decoded[1].isSensor, isFalse);
+      expect(decoded[1].isNotification, isTrue);
       expect(decoded[1].rungByEntity, isFalse);
-      expect(decoded[1].opensByClick, isTrue);
+      expect(decoded[1].opensByClick, isFalse);
     });
 
     test("decodes every stored 'open' but 'click' as 'tap'", () {
@@ -269,7 +294,8 @@ void main() {
         package: 'com.a',
         channelPrefix: 'com.a.ring',
       );
-      expect(notification.rungByNotification, isTrue);
+      expect(notification.isNotification, isTrue);
+      expect(notification.isSensor, isFalse);
       expect(notification.rungByEntity, isFalse);
       expect(notification.opensByClick, isFalse);
       const entity = DoorbellSignature(
@@ -280,7 +306,8 @@ void main() {
         open: 'click',
         clickLabel: 'B',
       );
-      expect(entity.rungByNotification, isFalse);
+      expect(entity.isNotification, isFalse);
+      expect(entity.isSensor, isTrue);
       expect(entity.rungByEntity, isTrue);
       expect(entity.opensByClick, isTrue);
     });
@@ -299,16 +326,33 @@ void main() {
     test('carry the Doorbell category and their default values', () {
       expect(defs.doorbellEnabled.defaultValue, isFalse);
       expect(defs.doorbellReturnSeconds.defaultValue, 75);
+      expect(defs.doorbellSensorEnabled.defaultValue, isFalse);
+      expect(defs.doorbellSensorReturnSeconds.defaultValue, 75);
+      expect(defs.doorbellClickDelaySeconds.defaultValue, 8);
       expect(defs.doorbellSignatures.defaultValue, '[]');
+      expect(defs.doorbellActivity.defaultValue, '{}');
       expect(defs.doorbellEnabled.category, 'Doorbell');
       expect(defs.doorbellReturnSeconds.category, 'Doorbell');
+      expect(defs.doorbellSensorEnabled.category, 'Doorbell');
+      expect(defs.doorbellSensorReturnSeconds.category, 'Doorbell');
+      expect(defs.doorbellClickDelaySeconds.category, 'Doorbell');
       expect(defs.doorbellSignatures.category, 'Doorbell');
+      expect(defs.doorbellActivity.category, 'Doorbell');
+    });
+
+    test('the activity setting stays off the settings pages', () {
+      expect(defs.doorbellActivity.hidden, isTrue);
+      expect(defs.doorbellActivity.perDevice, isTrue);
     });
 
     test('are all present in allSettings', () {
       expect(defs.allSettings, contains(defs.doorbellEnabled));
       expect(defs.allSettings, contains(defs.doorbellReturnSeconds));
+      expect(defs.allSettings, contains(defs.doorbellSensorEnabled));
+      expect(defs.allSettings, contains(defs.doorbellSensorReturnSeconds));
+      expect(defs.allSettings, contains(defs.doorbellClickDelaySeconds));
       expect(defs.allSettings, contains(defs.doorbellSignatures));
+      expect(defs.allSettings, contains(defs.doorbellActivity));
     });
   });
 }

@@ -58,7 +58,7 @@ void main() {
     late DoorbellEntityManager watcher;
 
     Future<void> start(List<DoorbellSignature> saved) async {
-      await build({'ks.doorbell.enabled': true});
+      await build({'ks.doorbell.sensor_enabled': true});
       doorbell.saved = saved;
       watcher = manager();
       await watcher.init();
@@ -164,6 +164,22 @@ void main() {
           channelPrefix: 'com.example.tap.ring',
         ),
       ]);
+      watcher.applyEntityState(entity, 'off');
+      watcher.applyEntityState(entity, 'on');
+      await pumpEventQueue();
+      expect(doorbell.rung, isEmpty);
+    });
+
+    test('watches nothing while the sensor switch is off', () async {
+      await build({'ks.doorbell.enabled': true});
+      doorbell.saved = [signature('front', entity)];
+      watcher = manager();
+      await watcher.init();
+      await pumpEventQueue();
+      expect(
+        (await commands.execute('getDoorbellEntities', const {})).data,
+        {'entities': {}},
+      );
       watcher.applyEntityState(entity, 'off');
       watcher.applyEntityState(entity, 'on');
       await pumpEventQueue();

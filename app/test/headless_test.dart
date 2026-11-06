@@ -97,6 +97,7 @@ void main() {
 
   test('the doorbell is pinned off and its page is hidden', () {
     expect(settings.get(defs.doorbellEnabled), isFalse);
+    expect(settings.get(defs.doorbellSensorEnabled), isFalse);
     final hidden = defs.deviceHiddenKeys;
     for (final def in defs.allSettings) {
       if (def.category == 'Doorbell') {

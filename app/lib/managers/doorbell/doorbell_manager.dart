@@ -9,6 +9,7 @@ import '../../core/manager.dart';
 import '../settings/definitions.dart' as defs;
 import '../settings/settings_manager.dart';
 import 'doorbell_signature.dart';
+import 'doorbell_status.dart';
 
 /// One notification the native side caught while a capture ran: the app
 /// it came from and the channel it arrived on. The signature picker turns
@@ -41,20 +42,26 @@ class DoorbellClickCapture {
   final String label;
 }
 
-/// The doorbell feature: the saved doorbells and the rings it answers.
+/// The doorbell feature: the saved doorbells and the rings it answers,
+/// in two independent sections.
 ///
-/// The manager keeps the list of saved doorbells (signatures) and pushes
-/// it to the native listener, which recognises a ring notification from
-/// one of them and reports it here. A ring is answered by opening the
-/// notification's own tap action through openNotificationAction or by
-/// launching the doorbell's app and clicking its card through
-/// openAppAndClick, with the global doorbell return setting, and the
-/// Home Assistant event kiosk_satellite_doorbell is published after
-/// it. A Home Assistant entity rings a doorbell through ringFromEntity,
-/// which always opens by click. The manager also runs the capture the
-/// signature picker uses: the capturing and captured notifiers and the
-/// start and stop commands. Commands list, add, update, remove and
-/// test open the saved doorbells, and start and stop the click capture.
+/// The manager keeps the list of saved doorbells (signatures) and
+/// pushes each section's share to the native listener: the
+/// notification doorbells while doorbell.enabled is on, so it
+/// recognises a ring notification from one of them and reports it
+/// here, and the sensor & tap doorbells' packages while
+/// doorbell.sensor_enabled is on, so its click service runs for them.
+/// A notification ring is answered by opening the notification's own
+/// tap action through openNotificationAction with the notification
+/// section's return setting; a Home Assistant entity rings a doorbell
+/// through ringFromEntity, which launches the doorbell's app and
+/// clicks its card through openAppAndClick with the sensor section's
+/// return setting. The Home Assistant event kiosk_satellite_doorbell
+/// is published after each. The manager also runs the captures the add
+/// flows use: the capturing and captured notifiers and the start and
+/// stop commands, and remembers each doorbell's last activity for the
+/// status text both Doorbell UIs show. Commands list, add, update,
+/// remove and test open the saved doorbells.
 class DoorbellManager extends Manager {
   DoorbellManager(super.bus, super.commands, super.log, this._settings);
 
@@ -78,7 +85,8 @@ class DoorbellManager extends Manager {
 
   StreamSubscription<SettingChanged>? _settingSub;
 
-  /// The clock the opened-recently window reads; the tests set it.
+  /// The clock the dedupe window and the activity times read; the
+  /// tests set it.
   @visibleForTesting
   DateTime Function() clock = DateTime.now;
 
@@ -86,9 +94,13 @@ class DoorbellManager extends Manager {
   /// within the dedupe window.
   final Map<String, DateTime> _opened = {};
 
-  /// The doorbell label each package and click label last opened, so a
-  /// click result can name the doorbell.
+  /// The doorbell id each package and click label last opened, so a
+  /// click result can find the doorbell it belongs to.
   final Map<String, String> _clickRings = {};
+
+  /// The last activity of each saved doorbell id, loaded from the
+  /// doorbellActivity setting at init and written back on every save.
+  Map<String, DoorbellActivity> _activity = {};
 
   /// The future of the last open by click: a click result the native
   /// side pushes from inside the launch call awaits it, so its
@@ -124,6 +136,8 @@ class DoorbellManager extends Manager {
 
   @override
   Future<void> init() async {
+    _activity =
+        decodeDoorbellActivity(_settings.get(defs.doorbellActivity));
     commands.register(
       Command(
         name: 'doorbellStartCapture',
@@ -161,11 +175,21 @@ class DoorbellManager extends Manager {
       Command(
         name: 'doorbellSignatures',
         description:
-            'The saved doorbells: [{id, label, package, channelPrefix}], '
-            'with the optional keys entity, open and clickLabel.',
-        handler: (_) async => CommandResult.ok(
-          [for (final signature in _signatures) signature.toJson()],
-        ),
+            'The saved doorbells: [{id, label, package, channelPrefix, '
+            'kind, statusText, state}], with the optional keys entity, '
+            'open and clickLabel; kind is notification or sensor.',
+        handler: (_) async => CommandResult.ok([
+          for (final signature in _signatures)
+            {
+              ...signature.toJson(),
+              'kind': signature.isSensor ? 'sensor' : 'notification',
+              'statusText': doorbellStatusText(
+                signature,
+                _activity[signature.id],
+              ),
+              'state': doorbellState(signature, _activity[signature.id]),
+            },
+        ]),
       ),
     );
 
@@ -173,14 +197,17 @@ class DoorbellManager extends Manager {
       Command(
         name: 'doorbellAddSignature',
         description: 'Save a doorbell to answer rings from: '
-            '{label, package, channelPrefix, entity, open, clickLabel}.',
+            '{label, package, channelPrefix, entity, open, clickLabel}; '
+            'an entity makes it a sensor & tap doorbell, a channel '
+            'prefix a notification doorbell.',
         params: const {
           'label': 'What the UI shows, e.g. Eufy Security',
           'package': 'The Android package the rings come from',
           'channelPrefix': 'What a ring notification channel id starts with',
           'entity': 'The Home Assistant entity that rings',
-          'open': "How a ring opens: 'tap' or 'click'",
-          'clickLabel': 'The card a click ring opens',
+          'open': 'Ignored: a sensor & tap doorbell opens by the click, '
+              'a notification doorbell by the tap',
+          'clickLabel': 'The card a sensor & tap doorbell opens',
         },
         handler: (p) async {
           final label = '${p['label'] ?? ''}'.trim();
@@ -191,20 +218,19 @@ class DoorbellManager extends Manager {
           if (rawEntity.isNotEmpty && entity.isEmpty) {
             return const CommandResult.fail(_badEntity);
           }
-          var open =
-              '${p['open'] ?? ''}'.trim() == 'click' ? 'click' : 'tap';
-          // A Home Assistant ring always opens by click.
-          if (entity.isNotEmpty) open = 'click';
           final clickLabel = '${p['clickLabel'] ?? ''}'.trim();
           final signatures = _signatures;
+          // The entity decides the section: a sensor & tap doorbell
+          // opens by the click and keeps no notification channel, a
+          // notification doorbell opens by the tap and keeps no card.
           final signature = DoorbellSignature(
             id: _uniqueId(label, signatures),
             label: label,
             package: package,
-            channelPrefix: channelPrefix,
+            channelPrefix: entity.isEmpty ? channelPrefix : '',
             entity: entity,
-            open: open,
-            clickLabel: clickLabel,
+            open: entity.isEmpty ? 'tap' : 'click',
+            clickLabel: entity.isEmpty ? '' : clickLabel,
           );
           final problem = _problem(signature);
           if (problem != null) return CommandResult.fail(problem);
@@ -235,6 +261,13 @@ class DoorbellManager extends Manager {
             defs.doorbellSignatures,
             encodeDoorbellSignatures(signatures),
           );
+          // A removed doorbell has no status left to show.
+          if (_activity.remove(id) != null) {
+            await _settings.set(
+              defs.doorbellActivity,
+              encodeDoorbellActivity(_activity),
+            );
+          }
           return const CommandResult.ok();
         },
       ),
@@ -245,14 +278,15 @@ class DoorbellManager extends Manager {
         name: 'doorbellUpdateSignature',
         description: 'Change a saved doorbell: {id, and any of label, '
             'channelPrefix, entity, open, clickLabel}; a key left out '
-            'keeps its value.',
+            'keeps its value, and the entity decides the section.',
         params: const {
           'id': 'The signature id from doorbellSignatures',
           'label': 'What the UI shows, e.g. Eufy Security',
           'channelPrefix': 'What a ring notification channel id starts with',
           'entity': 'The Home Assistant entity that rings',
-          'open': "How a ring opens: 'tap' or 'click'",
-          'clickLabel': 'The card a click ring opens',
+          'open': 'Ignored: a sensor & tap doorbell opens by the click, '
+              'a notification doorbell by the tap',
+          'clickLabel': 'The card a sensor & tap doorbell opens',
         },
         handler: (p) async {
           final id = '${p['id'] ?? ''}'.trim();
@@ -266,10 +300,6 @@ class DoorbellManager extends Manager {
           final saved = signatures[index];
           String field(String key, String current) =>
               p.containsKey(key) ? '${p[key] ?? ''}'.trim() : current;
-          var open = saved.open;
-          if (p.containsKey('open')) {
-            open = '${p['open'] ?? ''}'.trim() == 'click' ? 'click' : 'tap';
-          }
           var entity = saved.entity;
           if (p.containsKey('entity')) {
             final rawEntity = '${p['entity'] ?? ''}'.trim();
@@ -278,16 +308,19 @@ class DoorbellManager extends Manager {
               return const CommandResult.fail(_badEntity);
             }
           }
-          // A Home Assistant ring always opens by click.
-          if (entity.isNotEmpty) open = 'click';
+          // The entity decides the section: a sensor & tap doorbell
+          // opens by the click and keeps no notification channel, a
+          // notification doorbell opens by the tap and keeps no card.
           final merged = DoorbellSignature(
             id: saved.id,
             label: field('label', saved.label),
             package: saved.package,
-            channelPrefix: field('channelPrefix', saved.channelPrefix),
+            channelPrefix:
+                entity.isEmpty ? field('channelPrefix', saved.channelPrefix) : '',
             entity: entity,
-            open: open,
-            clickLabel: field('clickLabel', saved.clickLabel),
+            open: entity.isEmpty ? 'tap' : 'click',
+            clickLabel:
+                entity.isEmpty ? '' : field('clickLabel', saved.clickLabel),
           );
           final problem = _problem(merged);
           if (problem != null) return CommandResult.fail(problem);
@@ -331,7 +364,7 @@ class DoorbellManager extends Manager {
           'package': 'The Android package of the doorbell app',
         },
         handler: (p) async {
-          if (!_settings.get(defs.doorbellEnabled)) {
+          if (!_settings.get(defs.doorbellSensorEnabled)) {
             return const CommandResult.fail('the doorbell setting is off');
           }
           final package = '${p['package'] ?? ''}'.trim();
@@ -381,7 +414,7 @@ class DoorbellManager extends Manager {
             '{id}.',
         params: const {'id': 'The signature id from doorbellSignatures'},
         handler: (p) async {
-          if (!_settings.get(defs.doorbellEnabled)) {
+          if (!_settings.get(defs.doorbellSensorEnabled)) {
             return const CommandResult.fail('the doorbell setting is off');
           }
           final id = '${p['id'] ?? ''}'.trim();
@@ -446,6 +479,17 @@ class DoorbellManager extends Manager {
           final label = '${args['label'] ?? ''}';
           final result = '${args['result'] ?? ''}';
           log.info(name, "click '$label': $result");
+          // The click is matched by package and label: two doorbells
+          // can share a click label.
+          final key = package.isEmpty ? label : '$package\n$label';
+          final id = _clickRings[key];
+          String? doorbell;
+          if (id != null) {
+            for (final signature in _signatures) {
+              if (signature.id == id) doorbell = signature.label;
+            }
+            await _saveActivity(id, 'ring', result, '');
+          }
           if (result != 'clicked') {
             // A result the native side pushes from inside the launch
             // call would land before the ringing event of that open:
@@ -460,12 +504,9 @@ class DoorbellManager extends Manager {
               }
               await Future<void>.delayed(Duration.zero);
             }
-            // The click is matched by package and label: two doorbells
-            // can share a click label.
-            final key = package.isEmpty ? label : '$package\n$label';
             bus.publish(HaEventRequested('kiosk_satellite_doorbell', {
               'event_type': 'click_failed',
-              'doorbell': _clickRings[key] ?? label,
+              'doorbell': doorbell ?? label,
               'label': label,
               'reason': result,
             }));
@@ -485,13 +526,17 @@ class DoorbellManager extends Manager {
     });
     _settingSub = bus.on<SettingChanged>().listen((e) {
       if (e.key == defs.doorbellEnabled.key ||
+          e.key == defs.doorbellSensorEnabled.key ||
           e.key == defs.doorbellSignatures.key) {
-        // Turning the setting off ends a running capture.
+        // Turning a section's switch off ends that section's running
+        // capture.
         if (e.key == defs.doorbellEnabled.key && e.value != true) {
           if (capturing.value) {
             unawaited(_stopCapture());
             _setCaptured(null);
           }
+        }
+        if (e.key == defs.doorbellSensorEnabled.key && e.value != true) {
           if (clickCapturing.value) {
             unawaited(_stopClickCapture());
             _setClickCaptured(null);
@@ -571,21 +616,19 @@ class DoorbellManager extends Manager {
     unawaited(commands.execute('bringToFront', const {}));
   }
 
-  /// Tell the native listener which doorbells to answer: the saved
-  /// signatures a notification can ring, then the packages of the ones
-  /// a click can open: a doorbell with a click label (a click ring, a
-  /// tap-failure fallback or a test open), one a ring opens by click,
-  /// or one a Home Assistant entity rings. An empty list while the
-  /// setting is off makes it ignore every ring.
+  /// Tell the native listener which doorbells to answer, per section:
+  /// the notification doorbells while the notification switch is on,
+  /// then the packages of the sensor & tap doorbells while the sensor
+  /// switch is on. An empty list makes that side ignore every ring.
   Future<void> _pushConfiguration() async {
-    final signatures = _settings.get(defs.doorbellEnabled)
-        ? decodeDoorbellSignatures(_settings.get(defs.doorbellSignatures))
-        : const <DoorbellSignature>[];
+    final signatures =
+        decodeDoorbellSignatures(_settings.get(defs.doorbellSignatures));
     try {
       await _channel.invokeMethod('configure', {
         'signatures': [
-          for (final signature in signatures)
-            if (signature.rungByNotification) signature.toJson(),
+          if (_settings.get(defs.doorbellEnabled))
+            for (final signature in signatures)
+              if (signature.isNotification) signature.toJson(),
         ],
       });
     } on MissingPluginException {
@@ -598,11 +641,9 @@ class DoorbellManager extends Manager {
     try {
       await _channel.invokeMethod('configureClick', {
         'packages': {
-          for (final signature in signatures)
-            if (signature.clickLabel.isNotEmpty ||
-                signature.opensByClick ||
-                signature.rungByEntity)
-              signature.package,
+          if (_settings.get(defs.doorbellSensorEnabled))
+            for (final signature in signatures)
+              if (signature.isSensor) signature.package,
         }.toList(),
       });
     } on MissingPluginException {
@@ -629,15 +670,15 @@ class DoorbellManager extends Manager {
   /// The entity watcher calls this when a doorbell's Home Assistant
   /// entity turns on: wake the screen, open the doorbell by click and
   /// tell Home Assistant. A second ring of the same doorbell within
-  /// the dedupe window is ignored, and so is one while the doorbell
-  /// setting is off or a camera is being taught.
+  /// the dedupe window is ignored, and so is one while the sensor &
+  /// tap section's switch is off or a camera is being taught.
   Future<void> ringFromEntity(String id) async {
     DoorbellSignature? saved;
     for (final signature in _signatures) {
       if (signature.id == id && signature.rungByEntity) saved = signature;
     }
     if (saved == null) return;
-    if (!_settings.get(defs.doorbellEnabled)) {
+    if (!_settings.get(defs.doorbellSensorEnabled)) {
       log.info(
         name,
         "ring from '${saved.entity}' ignored: the doorbell setting is off",
@@ -715,43 +756,70 @@ class DoorbellManager extends Manager {
       'the entity must look like binary_sensor.front_door';
 
   /// Why [signature] cannot be saved, null when it can: a doorbell
-  /// needs a label and a package, something to ring it (a notification
-  /// channel or a Home Assistant entity), and a click label whenever a
-  /// Home Assistant entity rings it or a ring opens by a click.
+  /// needs a label and a package, and then what its section needs: a
+  /// notification doorbell a notification channel, a sensor & tap
+  /// doorbell a card label (its entity is what makes it one).
   String? _problem(DoorbellSignature signature) {
     if (signature.label.isEmpty || signature.package.isEmpty) {
       return 'label and package are required';
     }
-    if (signature.channelPrefix.isEmpty && signature.entity.isEmpty) {
-      return 'a doorbell needs a notification channel or a Home Assistant '
-          'entity';
-    }
-    if (signature.entity.isNotEmpty && signature.clickLabel.isEmpty) {
-      return 'a Home Assistant ring needs a click label';
-    }
-    if (signature.open == 'click' && signature.clickLabel.isEmpty) {
-      return 'a click doorbell needs a click label';
+    if (signature.isSensor) {
+      if (signature.clickLabel.isEmpty) {
+        return 'a sensor doorbell needs a card label';
+      }
+    } else if (signature.channelPrefix.isEmpty) {
+      return 'a notification doorbell needs a notification channel';
     }
     return null;
   }
 
-  /// Open [s] the way a click ring does: launch its app and click its
-  /// card, remembering the click so a later click result can name the
-  /// doorbell it opened. The kiosk comes back after the doorbell return
-  /// setting, but never before the click could land: the delay plus the
-  /// 15 second search window plus a margin. The run also completes
-  /// [_opening], which a click result pushed from inside the launch
-  /// call awaits, so the click_failed event lands after the ringing
-  /// one.
+  /// Record a doorbell's last activity and write it to the setting:
+  /// the map keeps at most 50 doorbells with the most recent last,
+  /// and ids that are no longer saved are dropped.
+  Future<void> _saveActivity(
+    String id,
+    String kind,
+    String result,
+    String detail,
+  ) async {
+    _activity.remove(id);
+    _activity[id] = DoorbellActivity(
+      at: clock(),
+      kind: kind,
+      result: result,
+      detail: detail,
+    );
+    final ids = {for (final signature in _signatures) signature.id};
+    _activity.removeWhere((savedId, _) => !ids.contains(savedId));
+    while (_activity.length > 50) {
+      _activity.remove(_activity.keys.first);
+    }
+    await _settings.set(
+      defs.doorbellActivity,
+      encodeDoorbellActivity(_activity),
+    );
+  }
+
+  /// Open [s] the way a sensor & tap ring does: launch its app and
+  /// click its card, remembering the click so a later click result can
+  /// find the doorbell it belongs to. The kiosk comes back after the
+  /// sensor section's return setting, but never before the click could
+  /// land: the delay plus the 15 second search window plus a margin.
+  /// The run also completes [_opening], which a click result pushed
+  /// from inside the launch call awaits, so the click_failed event
+  /// lands after the ringing one. A launch that did not start records
+  /// the doorbell's last activity as a launch failure: no click
+  /// result will arrive for it.
   Future<CommandResult> _openByClick(DoorbellSignature s) async {
     final opening = Completer<void>();
     _opening = opening.future;
     try {
       final delay = _settings.get(defs.doorbellClickDelaySeconds).toInt();
-      var returnAfter = _settings.get(defs.doorbellReturnSeconds).toInt();
+      var returnAfter =
+          _settings.get(defs.doorbellSensorReturnSeconds).toInt();
       final clickWait = delay + 15 + 10;
       if (returnAfter < clickWait) returnAfter = clickWait;
-      _clickRings['${s.package}\n${s.clickLabel}'] = s.label;
+      _clickRings['${s.package}\n${s.clickLabel}'] = s.id;
       log.info(
         name,
         "doorbell '${s.label}': opening by click, tap after ${delay}s",
@@ -767,6 +835,12 @@ class DoorbellManager extends Manager {
           name,
           "doorbell '${s.label}' not opened by click: ${result.error}",
         );
+        await _saveActivity(
+          s.id,
+          'ring',
+          'launch_failed',
+          result.error ?? '',
+        );
       }
       return result;
     } finally {
@@ -774,6 +848,12 @@ class DoorbellManager extends Manager {
     }
   }
 
+  /// The native listener reports a ring notification here. Only the
+  /// notification section answers: a ring while its switch is off, a
+  /// ring while a camera is being taught and a ring of a sensor &
+  /// tap doorbell are ignored. The ring opens the notification's own
+  /// tap action with the notification section's return setting, and
+  /// the doorbell's last activity records whether that opened.
   Future<void> _onRing({
     required String package,
     required String key,
@@ -822,27 +902,19 @@ class DoorbellManager extends Manager {
     for (final signature in _signatures) {
       if (signature.id == signatureId) saved = signature;
     }
-    // A doorbell an entity also rings would open twice when its
-    // notification follows its entity ring, so a ring for one that
-    // opened recently is ignored.
-    if (saved != null && saved.rungByEntity && _recentlyOpened(saved.id)) {
+    // A sensor & tap doorbell rings from its entity, not from a
+    // notification: the native side is never told its channel, and a
+    // ring that slips through anyway is not answered.
+    if (saved != null && saved.isSensor) {
       log.info(
         name,
-        "ring '$title' ignored: it opened within $_dedupeSeconds s",
+        "ring '$title' ignored: '${saved.label}' rings from its entity",
       );
       return;
     }
     if (_settings.get(defs.lockdownEnabled)) {
       log.info(name, "ring '$title' not opened: lockdown holds");
       publish(false);
-      return;
-    }
-    if (saved != null && saved.opensByClick && saved.clickLabel.isNotEmpty) {
-      // A dark panel or a screensaver would hide the camera it opens.
-      await commands.execute('screenOn', const {});
-      _recordOpened(saved.id);
-      final result = await _openByClick(saved);
-      publish(result.ok, 'click');
       return;
     }
     final seconds = _settings.get(defs.doorbellReturnSeconds).toInt();
@@ -856,14 +928,15 @@ class DoorbellManager extends Manager {
       'returnAfterSeconds': seconds,
     });
     if (!result.ok) log.warn(name, "ring '$title' not opened: ${result.error}");
-    if (!result.ok && saved != null && saved.clickLabel.isNotEmpty) {
-      log.info(name, 'tap failed, falling back to a click');
-      _recordOpened(saved.id);
-      final click = await _openByClick(saved);
-      publish(click.ok, 'click');
-      return;
-    }
     publish(result.ok);
+    if (saved != null) {
+      await _saveActivity(
+        saved.id,
+        'ring',
+        result.ok ? 'opened' : 'not_opened',
+        result.ok ? '' : (result.error ?? ''),
+      );
+    }
   }
 
   @override
