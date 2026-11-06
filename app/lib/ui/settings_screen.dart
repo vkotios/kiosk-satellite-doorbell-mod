@@ -33,7 +33,6 @@ import '../managers/screensaver/screensaver_manager.dart'
 import '../managers/screensaver/screensaver_widgets.dart';
 import '../managers/device/wifi_mac.dart'
     show WifiMacIdentity, WifiMacSource, wifiMacIdentity;
-import '../managers/doorbell/doorbell_signature.dart';
 import '../managers/kiosk/drawer_items.dart';
 import '../managers/settings/definitions.dart';
 import '../managers/person/person_sensor_manager.dart' show LogAccess;
@@ -53,7 +52,7 @@ import 'color_picker.dart';
 import 'celestial_settings.dart';
 import 'weather_mood_settings.dart';
 import 'date_picker.dart';
-import 'doorbell_dialog.dart';
+import 'doorbell_page.dart';
 import 'gesture_settings.dart';
 import 'entity_picker.dart';
 import 'glance_rows.dart';
@@ -2644,28 +2643,34 @@ class _CategoryContentState extends State<_CategoryContent> {
                 ),
               ],
             ),
-          ..._withEsphomeStartError(
-            _sectionedCards(
-              container,
-              // With the Camera master switch off (or no camera on the
-              // device at all), motion detection cannot run: the dismiss
-              // switch renders disabled (below) with the reason, instead of
-              // lying enabled; its tuning rows live in the Camera section
-              // now and hide with the master there. A camera-less device
-              // keeps only the disabled master switch.
-              widget.category == 'Camera' &&
-                      container.deviceCamera.cameraKnownAbsent
-                  ? const [cameraEnabled]
-                  : _inlineDefsFor(widget.category),
-              () => setState(() {}),
-              replace: _rowReplacements(container),
-              after: _rowExtras(container),
-              before: {
-                if (widget.category == 'Screensaver')
-                  screensaverWidgets.key: ?_pluginScreensaverEntry(container),
-              },
+          // The Doorbell page is its own two sections, not the generic
+          // settings cards: each section's switch carries its grant,
+          // its settings and its doorbells.
+          if (widget.category == 'Doorbell')
+            ...doorbellSections(container, () => setState(() {}))
+          else
+            ..._withEsphomeStartError(
+              _sectionedCards(
+                container,
+                // With the Camera master switch off (or no camera on the
+                // device at all), motion detection cannot run: the dismiss
+                // switch renders disabled (below) with the reason, instead of
+                // lying enabled; its tuning rows live in the Camera section
+                // now and hide with the master there. A camera-less device
+                // keeps only the disabled master switch.
+                widget.category == 'Camera' &&
+                        container.deviceCamera.cameraKnownAbsent
+                    ? const [cameraEnabled]
+                    : _inlineDefsFor(widget.category),
+                () => setState(() {}),
+                replace: _rowReplacements(container),
+                after: _rowExtras(container),
+                before: {
+                  if (widget.category == 'Screensaver')
+                    screensaverWidgets.key: ?_pluginScreensaverEntry(container),
+                },
+              ),
             ),
-          ),
           // No setting draws the URL Filter, so its row is placed here,
           // last on the page.
           if (widget.category == 'Browser')
@@ -2706,21 +2711,6 @@ class _CategoryContentState extends State<_CategoryContent> {
             id: 'x:launcher_permissions',
             child: SettingsCard(
               children: [_LauncherPermissionsTile(container: container)],
-            ),
-          ),
-        ],
-        // The Doorbell page's one grant, only while the setting is on:
-        // Android shows a ring to no one without it.
-        if (widget.category == 'Doorbell' &&
-            container.settings.get(doorbellEnabled)) ...[
-          SectionHeading('Required system permissions'),
-          SearchLandingTarget(
-            id: 'x:doorbell_permissions',
-            child: SettingsCard(
-              children: [
-                _DoorbellPermissionsTile(container: container),
-                _DoorbellClickAccessTile(container: container),
-              ],
             ),
           ),
         ],
@@ -5140,178 +5130,6 @@ class _MediaSessionPermissionsTileState
                 await _refresh();
               },
               child: Text(mediaText(context, 'Grant')),
-            ),
-    );
-  }
-}
-
-/// The Doorbell page's Required system permissions group: the
-/// Notification access grant, in the Media Session tile's shape.
-class _DoorbellPermissionsTile extends StatefulWidget {
-  const _DoorbellPermissionsTile({required this.container});
-
-  final AppContainer container;
-
-  @override
-  State<_DoorbellPermissionsTile> createState() =>
-      _DoorbellPermissionsTileState();
-}
-
-class _DoorbellPermissionsTileState extends State<_DoorbellPermissionsTile>
-    with WidgetsBindingObserver {
-  bool? _granted;
-
-  @override
-  void initState() {
-    super.initState();
-    WidgetsBinding.instance.addObserver(this);
-    _refresh();
-  }
-
-  @override
-  void dispose() {
-    WidgetsBinding.instance.removeObserver(this);
-    super.dispose();
-  }
-
-  final _returned = ReturnWatch();
-
-  @override
-  void didChangeAppLifecycleState(AppLifecycleState state) {
-    // The grant is given on an OS screen that reports nothing back.
-    if (_returned.returned(state)) _refresh();
-  }
-
-  Future<void> _refresh() async {
-    final granted = await SessionPlayer.hasAccess();
-    if (!mounted) return;
-    setState(() => _granted = granted);
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    final theme = Theme.of(context);
-    final granted = _granted;
-    return SettingsRow(
-      leading: Icon(
-        granted == true
-            ? Icons.check_circle_outline
-            : Icons.notifications_off_outlined,
-        color: granted == true ? null : theme.colorScheme.error,
-      ),
-      title: const Text('Notification access'),
-      subtitle: Text(
-        granted == true
-            ? 'Kiosk Satellite sees a ring from the doorbell apps you '
-                'saved. It reads notifications from those apps only, and '
-                'for a short time while you capture a new doorbell.'
-            : 'Without this Android never shows Kiosk Satellite a ring, '
-                'so no doorbell can open.',
-      ),
-      trailing: granted == true
-          ? null
-          : TextButton(
-              onPressed: () async {
-                await widget.container.commands.execute(
-                  'requestOsPermissions',
-                  {
-                    'which': ['notificationAccess'],
-                  },
-                );
-                await _refresh();
-              },
-              child: const Text('Grant'),
-            ),
-    );
-  }
-}
-
-/// The Doorbell page's click access: the Accessibility grant a
-/// doorbell that opens by a tap on its card needs, in the
-/// permissions tile's shape.
-class _DoorbellClickAccessTile extends StatefulWidget {
-  const _DoorbellClickAccessTile({required this.container});
-
-  final AppContainer container;
-
-  @override
-  State<_DoorbellClickAccessTile> createState() =>
-      _DoorbellClickAccessTileState();
-}
-
-class _DoorbellClickAccessTileState extends State<_DoorbellClickAccessTile>
-    with WidgetsBindingObserver {
-  bool? _running;
-
-  @override
-  void initState() {
-    super.initState();
-    WidgetsBinding.instance.addObserver(this);
-    _refresh();
-  }
-
-  @override
-  void dispose() {
-    WidgetsBinding.instance.removeObserver(this);
-    super.dispose();
-  }
-
-  final _returned = ReturnWatch();
-
-  @override
-  void didChangeAppLifecycleState(AppLifecycleState state) {
-    // The service is turned on on an OS screen that reports nothing
-    // back.
-    if (_returned.returned(state)) _refresh();
-  }
-
-  Future<void> _refresh() async {
-    final result = await widget.container.commands.execute(
-      'doorbellClickAccess',
-      const {},
-    );
-    if (!mounted) return;
-    if (!result.ok) {
-      setState(() => _running = null);
-      return;
-    }
-    final data = result.data;
-    setState(() => _running = data is Map && data['running'] == true);
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    final theme = Theme.of(context);
-    final running = _running;
-    return SettingsRow(
-      leading: Icon(
-        running == true
-            ? Icons.check_circle_outline
-            : Icons.touch_app_outlined,
-        color: running == true ? null : theme.colorScheme.error,
-      ),
-      title: const Text('Doorbell click access'),
-      subtitle: Text(
-        running == true
-            ? 'Kiosk Satellite can tap your doorbell camera. It reads '
-                'the doorbell app\'s screen only while it taps, and does '
-                'nothing in any other app.'
-            : 'Without this Kiosk Satellite cannot tap the camera, so a '
-                'doorbell that rings by a Home Assistant sensor cannot '
-                'open. Turn it on in Android Accessibility settings '
-                '(find Kiosk Satellite there).',
-      ),
-      trailing: running == true
-          ? null
-          : TextButton(
-              onPressed: () async {
-                await widget.container.commands.execute(
-                  'doorbellOpenClickSettings',
-                  const {},
-                );
-                await _refresh();
-              },
-              child: const Text('Open'),
             ),
     );
   }
@@ -11712,24 +11530,6 @@ class SettingTile extends StatelessWidget {
             ),
             trailing: const Icon(Icons.edit_outlined),
             onTap: () => _pickLauncherApps(context),
-          );
-        }
-        // The saved doorbells: listed and changed in the doorbell
-        // dialog, never typed as JSON.
-        if (def.key == doorbellSignatures.key) {
-          final saved = decodeDoorbellSignatures(value as String);
-          return ListTile(
-            title: Text(def.localizedTitle(context)),
-            subtitle: Text(
-              saved.isEmpty
-                  ? 'None yet. Add Eufy Security or capture your doorbell.'
-                  : saved.map((doorbell) => doorbell.label).join(', '),
-            ),
-            trailing: const Icon(Icons.edit_outlined),
-            onTap: () async {
-              await showDoorbellDialog(context, c);
-              onChanged();
-            },
           );
         }
         // The launcher's apps a locked kiosk offers (issue #1067): a switch
