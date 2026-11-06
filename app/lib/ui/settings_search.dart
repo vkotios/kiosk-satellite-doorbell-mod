@@ -582,9 +582,17 @@ const List<SettingsSearchEntry> handBuiltSearchEntries = [
   ),
   SettingsSearchEntry(
     category: 'Doorbell',
-    title: 'Required system permissions',
-    description: 'The notification access the doorbell needs to see a ring.',
+    title: 'Notification access',
+    description: 'The access the notification doorbells need to see a ring.',
     anchorId: 'x:doorbell_permissions',
+  ),
+  SettingsSearchEntry(
+    category: 'Doorbell',
+    title: 'Doorbell click access',
+    description:
+        'The Accessibility service the sensor & tap doorbells need to tap '
+        'the camera.',
+    anchorId: 'x:doorbell_click_access',
   ),
   SettingsSearchEntry(
     category: 'Home',

@@ -72,7 +72,10 @@ List<Widget> doorbellSections(AppContainer container, VoidCallback onChanged) {
         ),
         const HintRow(_sensorExplanation),
         if (container.settings.get(doorbellSensorEnabled)) ...[
-          _DoorbellClickAccessTile(container: container),
+          SearchLandingTarget(
+            id: 'x:doorbell_click_access',
+            child: _DoorbellClickAccessTile(container: container),
+          ),
           SettingTile(
             container: container,
             def: doorbellClickDelaySeconds,
