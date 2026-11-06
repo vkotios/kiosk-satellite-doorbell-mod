@@ -5,7 +5,8 @@ import 'package:flutter/material.dart';
 import '../app_container.dart';
 import '../core/command_registry.dart';
 import '../managers/doorbell/doorbell_manager.dart' show DoorbellClickCapture;
-import '../managers/settings/definitions.dart' show doorbellEnabled;
+import '../managers/settings/definitions.dart' show doorbellSensorEnabled;
+import 'doorbell_test_dialog.dart';
 import 'entity_picker.dart';
 import 'kit.dart';
 import 'toast.dart';
@@ -13,16 +14,36 @@ import 'toast.dart';
 /// The Eufy Security package, the app this wizard was built against.
 const _eufyPackage = 'com.oceanwing.battery.cam';
 
-/// The "Add a camera doorbell" wizard: pick the doorbell's app, turn
-/// on the Doorbell click access, teach the camera by tapping its card
-/// in the app, pick the Home Assistant sensor that rings it, then
-/// save and test the open. Returns true when a doorbell was saved.
+/// The five steps' titles, shown bold under the 'Step N of 5' line.
+const _stepTitles = {
+  1: 'Choose the doorbell app',
+  2: 'Allow Kiosk Satellite to tap',
+  3: 'Show me the camera',
+  4: 'Name it and choose its sensor',
+  5: 'Save and test',
+};
+
+/// The "Add sensor & tap doorbell" wizard: choose the doorbell's app,
+/// allow Kiosk Satellite to tap, teach the camera by tapping its card
+/// in the app, name the doorbell and pick the Home Assistant sensor
+/// that rings it, then save it and run the real test. The Ready screen
+/// shows only after the test's tap worked; a failed test leaves the
+/// doorbell saved, with the manager's status and the choice to test
+/// or teach again. Returns true when a doorbell was saved.
 Future<bool> showDoorbellClickDialog(
   BuildContext context,
   AppContainer container,
 ) async {
-  // The wizard's step, 1 to 5.
+  // The wizard's step, 1 to 5, while the screen is the wizard's.
   var step = 1;
+
+  // The screen the dialog shows: the wizard's steps, or the Ready or
+  // the not-working screen the test's answer leads to.
+  var screen = 'steps';
+
+  // The manager's status line for the doorbell this run saved, shown
+  // on the not-working screen; the plain fallback until it is read.
+  var failText = 'the test failed';
 
   // One command at a time: while one runs, the buttons that start
   // commands are disabled, so a double tap cannot run two.
@@ -46,7 +67,7 @@ Future<bool> showDoorbellClickDialog(
   var starting = false;
 
   // The doorbell was saved: what the dialog returns. Its id feeds the
-  // Test open button.
+  // test dialog, and tells a later pass to update, not add.
   var saved = false;
   var savedId = '';
 
@@ -218,53 +239,107 @@ Future<bool> showDoorbellClickDialog(
     setState(() => step = 4);
   }
 
-  // Save the doorbell: the name, the app, the card to click and the
-  // sensor that rings it.
-  Future<void> save(BuildContext dialogContext, StateSetter setState) async {
-    final result = await runCommand(
-      dialogContext,
-      setState,
-      'doorbellAddSignature',
-      {
-        'label': nameController.text.trim(),
-        'package': packageController.text.trim(),
-        'channelPrefix': '',
-        'entity': entity,
-        'open': 'click',
-        'clickLabel': labelController.text.trim(),
-      },
-    );
-    if (result == null) return;
-    // The doorbell is saved the moment the command says so, even
-    // when a Cancel closed the dialog meanwhile: the dialog still
-    // reports it saved.
-    if (result.ok) {
-      saved = true;
-      final data = result.data;
-      savedId = data is Map ? '${data['id'] ?? ''}' : '';
-    }
-    if (!dialogContext.mounted) return;
-    if (!result.ok) {
-      _toastFailure(dialogContext, result.error);
-      return;
-    }
-    setState(() {});
-  }
-
-  // Open the saved doorbell the way a ring would, to check that the
-  // click finds the camera.
-  Future<void> testOpen(
+  // The manager's status line for the doorbell this run saved, for
+  // the not-working screen; the plain fallback when it cannot be
+  // read.
+  Future<String> savedStatusText(
     BuildContext dialogContext,
     StateSetter setState,
   ) async {
     final result = await runCommand(
       dialogContext,
       setState,
-      'doorbellTestOpen',
-      {'id': savedId},
+      'doorbellSignatures',
+      const {},
     );
-    if (result == null || result.ok || !dialogContext.mounted) return;
-    _toastFailure(dialogContext, result.error);
+    if (result == null || !result.ok || result.data is! List) {
+      return 'the test failed';
+    }
+    for (final entry in result.data as List) {
+      if (entry is Map && '${entry['id'] ?? ''}' == savedId) {
+        final text = '${entry['statusText'] ?? ''}';
+        if (text.isNotEmpty) return text;
+      }
+    }
+    return 'the test failed';
+  }
+
+  // Run the real test for the doorbell this run saved, in the test
+  // dialog: it opens the app, tries the tap and shows the outcome
+  // itself. The Ready screen shows only when it says the tap worked;
+  // otherwise the not-working screen shows the manager's status line.
+  Future<void> runTest(
+    BuildContext dialogContext,
+    StateSetter setState,
+  ) async {
+    final passed = await showDoorbellTestDialog(
+      dialogContext,
+      container,
+      id: savedId,
+      label: nameController.text.trim(),
+    );
+    if (!dialogContext.mounted) return;
+    if (passed) {
+      setState(() => screen = 'done');
+      return;
+    }
+    final status = await savedStatusText(dialogContext, setState);
+    if (!dialogContext.mounted) return;
+    setState(() {
+      failText = status;
+      screen = 'failed';
+    });
+  }
+
+  // Save the doorbell and run the real test. The first pass adds the
+  // doorbell and remembers its id; a later pass (after a failed test
+  // and a re-teach) updates the one this run already saved, so a
+  // doorbell is never saved twice.
+  Future<void> saveAndTest(
+    BuildContext dialogContext,
+    StateSetter setState,
+  ) async {
+    final name = nameController.text.trim();
+    final card = labelController.text.trim();
+    final CommandResult? result;
+    if (savedId.isEmpty) {
+      result = await runCommand(
+        dialogContext,
+        setState,
+        'doorbellAddSignature',
+        {
+          'label': name,
+          'package': packageController.text.trim(),
+          'channelPrefix': '',
+          'entity': entity,
+          'open': 'click',
+          'clickLabel': card,
+        },
+      );
+    } else {
+      result = await runCommand(
+        dialogContext,
+        setState,
+        'doorbellUpdateSignature',
+        {'id': savedId, 'label': name, 'entity': entity, 'clickLabel': card},
+      );
+    }
+    if (result == null) return;
+    if (result.ok) {
+      // The doorbell is saved the moment the command says so, even
+      // when a Cancel closed the dialog meanwhile: the dialog still
+      // reports it saved.
+      saved = true;
+      final data = result.data;
+      final id = data is Map ? '${data['id'] ?? ''}' : '';
+      if (id.isNotEmpty) savedId = id;
+    }
+    if (!dialogContext.mounted) return;
+    if (!result.ok) {
+      _toastFailure(dialogContext, result.error);
+      return;
+    }
+    await runTest(dialogContext, setState);
   }
 
   // The dialog's setState and whether the dialog is already
@@ -299,7 +374,7 @@ Future<bool> showDoorbellClickDialog(
         // step is entered. The check is a command too, so it goes
         // through the wrapper, whose setState must not run inside
         // this build.
-        if (step == 2 && !accessAsked) {
+        if (screen == 'steps' && step == 2 && !accessAsked) {
           accessAsked = true;
           unawaited(
             Future<void>.delayed(Duration.zero, () async {
@@ -311,7 +386,9 @@ Future<bool> showDoorbellClickDialog(
         // A catch from another package must not survive: coming
         // back to step 3 after the package changed forgets it,
         // the label typed for it and the name filled from it.
-        if (step == 3 && packageController.text.trim() != taughtPackage) {
+        if (screen == 'steps' &&
+            step == 3 &&
+            packageController.text.trim() != taughtPackage) {
           taughtPackage = packageController.text.trim();
           container.doorbell.clickCaptured.value = null;
           labelController.text = '';
@@ -322,7 +399,7 @@ Future<bool> showDoorbellClickDialog(
         // The name starts as the card label, filled when the step
         // shows after a new catch, and only when the user did not
         // change it by hand.
-        if (step == 4) {
+        if (screen == 'steps' && step == 4) {
           final caught = container.doorbell.clickCaptured.value;
           final caughtAgain = caught != null &&
               !identical(nameFilledFor, caught);
@@ -337,15 +414,35 @@ Future<bool> showDoorbellClickDialog(
             }
           }
         }
-        final enabled = container.settings.get(doorbellEnabled);
+        final sensorEnabled = container.settings.get(doorbellSensorEnabled);
         final small = TextStyle(
           fontSize: 13,
           color: Theme.of(context).colorScheme.onSurfaceVariant,
         );
         final List<Widget> rows;
-        if (step == 1) {
+        if (screen == 'done') {
           rows = [
-            const Text('Which app is this doorbell in?'),
+            Text(
+              '${nameController.text.trim()} is ready. The tap worked. '
+              'When the sensor $entity turns on, this doorbell opens '
+              '${packageController.text.trim()} and taps '
+              '"${labelController.text.trim()}".',
+            ),
+          ];
+        } else if (screen == 'failed') {
+          final status = failText.endsWith('.') ? failText : '$failText.';
+          rows = [
+            Text(
+              '${nameController.text.trim()} is saved, but the test did '
+              'not work: $status',
+            ),
+          ];
+        } else if (step == 1) {
+          rows = [
+            const Text(
+              'Which app shows your doorbell camera? Kiosk Satellite '
+              'will open this app when the doorbell rings.',
+            ),
             Padding(
               padding: const EdgeInsets.only(top: 8),
               child: TextButton(
@@ -367,11 +464,12 @@ Future<bool> showDoorbellClickDialog(
                 onChanged: (_) => setState(() {}),
               ),
             ),
-            if (!enabled)
+            if (!sensorEnabled)
               Padding(
                 padding: const EdgeInsets.only(top: 8),
                 child: Text(
-                  'Turn on "Open the doorbell app on a ring" first.',
+                  'Turn on "Doorbell video launch by Home Assistant '
+                  'sensor & tap" first.',
                   style: small,
                 ),
               ),
@@ -381,16 +479,32 @@ Future<bool> showDoorbellClickDialog(
           if (!accessKnown) {
             status = const Text('Checking the click access.');
           } else if (accessOn) {
-            status = const Text('Doorbell click access is on.');
-          } else {
             status = const Text(
-              "Doorbell click access is off. Turn it on in Android's "
-              'Accessibility settings (find Kiosk Satellite there), then '
-              'come back and check again.',
+              'Doorbell click access is ON. You can continue.',
             );
+          } else {
+            status = const Text('Doorbell click access is OFF.');
           }
           rows = [
-            status,
+            const Text(
+              'To open the right camera, Kiosk Satellite taps the '
+              'camera\'s card in the doorbell app for you. Android '
+              'needs you to allow this once.',
+            ),
+            Padding(
+              padding: const EdgeInsets.only(top: 12),
+              child: status,
+            ),
+            if (accessKnown && !accessOn)
+              Padding(
+                padding: const EdgeInsets.only(top: 8),
+                child: Text(
+                  'Press Open Accessibility settings, find Kiosk '
+                  'Satellite in the list, turn it on, then come back '
+                  'and press Check again.',
+                  style: small,
+                ),
+              ),
             Padding(
               padding: const EdgeInsets.only(top: 12),
               child: Wrap(
@@ -436,8 +550,20 @@ Future<bool> showDoorbellClickDialog(
             ),
           );
           rows = [
-            const Text(
-              'Open your doorbell app and tap the camera of this doorbell.',
+            const Text('1. Press Open the app below.'),
+            Padding(
+              padding: const EdgeInsets.only(top: 4),
+              child: Text(
+                '2. In ${packageController.text.trim()}, tap the camera '
+                'that this doorbell should open.',
+              ),
+            ),
+            const Padding(
+              padding: EdgeInsets.only(top: 4),
+              child: Text(
+                '3. I bring you back here as soon as I have seen your '
+                'tap.',
+              ),
             ),
             Padding(
               padding: const EdgeInsets.only(top: 12),
@@ -454,8 +580,22 @@ Future<bool> showDoorbellClickDialog(
                       crossAxisAlignment: CrossAxisAlignment.start,
                       mainAxisSize: MainAxisSize.min,
                       children: [
-                        Text('Caught: ${caught.label}'),
+                        Text(
+                          'I saw this card: "${caught.label}". Is this the '
+                          'camera? If not, press Teach again.',
+                        ),
                         startButton('Teach again'),
+                        Padding(
+                          padding: const EdgeInsets.only(top: 12),
+                          child: TextField(
+                            controller: labelController,
+                            decoration: const InputDecoration(
+                              labelText:
+                                  'Card name (change it only if it is wrong)',
+                            ),
+                            onChanged: (_) => setState(() {}),
+                          ),
+                        ),
                       ],
                     );
                   }
@@ -465,7 +605,8 @@ Future<bool> showDoorbellClickDialog(
                       mainAxisSize: MainAxisSize.min,
                       children: [
                         const Text(
-                          'Waiting up to 90 seconds for your tap.',
+                          'Waiting for your tap in the doorbell app. This '
+                          'stops in 90 seconds.',
                         ),
                         const Padding(
                           padding: EdgeInsets.only(top: 12),
@@ -496,38 +637,41 @@ Future<bool> showDoorbellClickDialog(
                       crossAxisAlignment: CrossAxisAlignment.start,
                       mainAxisSize: MainAxisSize.min,
                       children: [
-                        const Text('Nothing was tapped in time.'),
-                        startButton('Open the app and wait'),
+                        const Text(
+                          'I did not see a tap. Press Open the app to try '
+                          'again.',
+                        ),
+                        startButton('Open the app'),
                       ],
                     );
                   }
-                  return startButton('Open the app and wait');
+                  return startButton('Open the app');
                 },
-              ),
-            ),
-            Padding(
-              padding: const EdgeInsets.only(top: 12),
-              child: TextField(
-                controller: labelController,
-                decoration: const InputDecoration(labelText: 'Card label'),
-                onChanged: (_) => setState(() {}),
               ),
             ),
           ];
         } else if (step == 4) {
           rows = [
-            TextField(
-              controller: nameController,
-              decoration: const InputDecoration(labelText: 'Name'),
-              onChanged: (_) => setState(() {}),
+            const Text(
+              'Give this doorbell a name, and choose the Home Assistant '
+              'sensor that turns on while it rings.',
+            ),
+            Padding(
+              padding: const EdgeInsets.only(top: 12),
+              child: TextField(
+                controller: nameController,
+                decoration: const InputDecoration(labelText: 'Name'),
+                onChanged: (_) => setState(() {}),
+              ),
             ),
             Padding(
               padding: const EdgeInsets.only(top: 16),
               child: LabeledField(
                 label: 'Ringing sensor',
                 helper:
-                    'The Home Assistant sensor that is on while this '
-                    'doorbell rings.',
+                    'Pick the binary_sensor that is on while this '
+                    'doorbell rings (usually named something like '
+                    '"..._ringing" or "..._doorbell").',
                 child: PickFieldBox(
                   spec: entitySpec(
                     context,
@@ -557,9 +701,9 @@ Future<bool> showDoorbellClickDialog(
           // earlier steps made.
           final summary = <String, String>{
             'Name': nameController.text.trim(),
-            'App package': packageController.text.trim(),
-            'Card label': labelController.text.trim(),
-            'Ringing sensor': entity,
+            'App': packageController.text.trim(),
+            'Card': labelController.text.trim(),
+            'Sensor': entity,
           };
           rows = [
             for (final entry in summary.entries)
@@ -567,93 +711,131 @@ Future<bool> showDoorbellClickDialog(
                 padding: const EdgeInsets.only(top: 4),
                 child: Text('${entry.key}: ${entry.value}'),
               ),
-            if (saved)
-              const Padding(
-                padding: EdgeInsets.only(top: 12),
-                child: Text('Saved.'),
+            const Padding(
+              padding: EdgeInsets.only(top: 12),
+              child: Text(
+                'Press Save and test. I save the doorbell, open the app '
+                'and try the tap. It takes up to 30 seconds. Do not '
+                'touch the tablet while it runs.',
               ),
+            ),
           ];
         }
         return AlertDialog(
-          title: const Text('Add a camera doorbell'),
+          title: Text(
+            screen == 'done'
+                ? 'Ready'
+                : screen == 'failed'
+                ? 'Saved, but not working yet'
+                : 'Add sensor & tap doorbell',
+          ),
           content: SizedBox(
             width: 420,
             child: ListView(
               shrinkWrap: true,
               children: [
-                Padding(
-                  padding: const EdgeInsets.only(bottom: 12),
-                  child: Text('Step $step of 5', style: small),
-                ),
+                if (screen == 'steps') ...[
+                  Padding(
+                    padding: const EdgeInsets.only(bottom: 4),
+                    child: Text('Step $step of 5', style: small),
+                  ),
+                  Padding(
+                    padding: const EdgeInsets.only(bottom: 12),
+                    child: Text(
+                      _stepTitles[step] ?? '',
+                      style: const TextStyle(fontWeight: FontWeight.bold),
+                    ),
+                  ),
+                ],
                 ...rows,
               ],
             ),
           ),
           actions: [
-            TextButton(
-              onPressed: () => Navigator.pop(context),
-              child: const Text('Cancel'),
-            ),
-            if (step > 1 && (step < 5 || !saved))
+            if (screen == 'done')
               TextButton(
-                onPressed: busy
-                    ? null
-                    : () => unawaited(goBack(context, setState)),
-                child: const Text('Back'),
+                onPressed: () => Navigator.pop(context, true),
+                child: const Text('Finish'),
               ),
-            if (step == 1)
-              TextButton(
-                onPressed:
-                    busy || !enabled || packageController.text.trim().isEmpty
-                        ? null
-                        : () => setState(() {
-                            step = 2;
-                            accessAsked = false;
-                          }),
-                child: const Text('Next'),
-              )
-            else if (step == 2)
-              TextButton(
-                onPressed: busy || !accessOn
-                    ? null
-                    : () => setState(() => step = 3),
-                child: const Text('Next'),
-              )
-            else if (step == 3)
-              TextButton(
-                onPressed: busy || labelController.text.trim().isEmpty
-                    ? null
-                    : () => unawaited(leaveStep3(context, setState)),
-                child: const Text('Next'),
-              )
-            else if (step == 4)
-              TextButton(
-                onPressed:
-                    busy ||
-                        nameController.text.trim().isEmpty ||
-                        entity.isEmpty
-                    ? null
-                    : () => setState(() => step = 5),
-                child: const Text('Next'),
-              )
-            else if (!saved)
+            if (screen == 'failed') ...[
               TextButton(
                 onPressed: busy
                     ? null
-                    : () => unawaited(save(context, setState)),
-                child: const Text('Save'),
-              )
-            else ...[
+                    : () => unawaited(runTest(context, setState)),
+                child: const Text('Test again'),
+              ),
               TextButton(
                 onPressed: busy
                     ? null
-                    : () => unawaited(testOpen(context, setState)),
-                child: const Text('Test open'),
+                    : () => setState(() {
+                        screen = 'steps';
+                        step = 3;
+                      }),
+                child: const Text('Teach the card again'),
               ),
               TextButton(
                 onPressed: () => Navigator.pop(context, true),
-                child: const Text('Done'),
+                child: const Text('Finish anyway'),
               ),
+            ],
+            if (screen == 'steps') ...[
+              TextButton(
+                onPressed: () => Navigator.pop(context),
+                child: Text(saved ? 'Finish anyway' : 'Cancel'),
+              ),
+              // The app of a doorbell this run already saved cannot
+              // be changed, so Back stops one step short of step 1.
+              if (step > 1 && (step > 2 || !saved))
+                TextButton(
+                  onPressed: busy
+                      ? null
+                      : () => unawaited(goBack(context, setState)),
+                  child: const Text('Back'),
+                ),
+              if (step == 1)
+                TextButton(
+                  onPressed:
+                      busy ||
+                          !sensorEnabled ||
+                          packageController.text.trim().isEmpty
+                      ? null
+                      : () => setState(() {
+                          step = 2;
+                          accessAsked = false;
+                        }),
+                  child: const Text('Next'),
+                )
+              else if (step == 2)
+                TextButton(
+                  onPressed: busy || !accessOn
+                      ? null
+                      : () => setState(() => step = 3),
+                  child: const Text('Next'),
+                )
+              else if (step == 3)
+                TextButton(
+                  onPressed: busy || labelController.text.trim().isEmpty
+                      ? null
+                      : () => unawaited(leaveStep3(context, setState)),
+                  child: const Text('Next'),
+                )
+              else if (step == 4)
+                TextButton(
+                  onPressed:
+                      busy ||
+                          nameController.text.trim().isEmpty ||
+                          entity.isEmpty
+                      ? null
+                      : () => setState(() => step = 5),
+                  child: const Text('Next'),
+                )
+              else
+                TextButton(
+                  onPressed: busy
+                      ? null
+                      : () => unawaited(saveAndTest(context, setState)),
+                  child: const Text('Save and test'),
+                ),
             ],
           ],
         );
