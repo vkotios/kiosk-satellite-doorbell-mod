@@ -310,6 +310,10 @@ class KioskManager extends Manager with WidgetsBindingObserver {
           'returnAfterSeconds':
               'Idle seconds before the kiosk comes back; omit to use the '
               "launcher's own return",
+          'reportCards':
+              'Whether the click service reports the names of the cards '
+              'it could see when it cannot find the card, for the '
+              'doorbell Test; default false',
         },
         handler: (p) async {
           final package = '${p['package'] ?? ''}'.trim();
@@ -324,6 +328,7 @@ class KioskManager extends Manager with WidgetsBindingObserver {
           if (delaySeconds < 0) delaySeconds = 0;
           if (delaySeconds > 120) delaySeconds = 120;
           final returnAfterSeconds = (p['returnAfterSeconds'] as num?)?.toInt();
+          final reportCards = p['reportCards'] == true;
           return _openOverKiosk(
             what: label,
             package: package,
@@ -333,6 +338,7 @@ class KioskManager extends Manager with WidgetsBindingObserver {
               'label': label,
               'delaySeconds': delaySeconds,
               'windowSeconds': 15,
+              'reportCards': reportCards,
             }),
             notOpened: '$package is not installed, or Android refused to '
                 'open it',

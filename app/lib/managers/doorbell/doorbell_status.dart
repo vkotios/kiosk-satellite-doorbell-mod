@@ -103,6 +103,8 @@ String _clickReason(DoorbellSignature signature, String result) {
       return 'Doorbell click access is off';
     case 'launch_failed':
       return 'could not open the app';
+    case 'timeout':
+      return 'the click service did not answer';
     default:
       return result;
   }
@@ -126,7 +128,8 @@ String doorbellStatusText(DoorbellSignature signature, DoorbellActivity? a) {
     if (a.result == 'not_found' ||
         a.result == 'wrong_app' ||
         a.result == 'service_off' ||
-        a.result == 'launch_failed') {
+        a.result == 'launch_failed' ||
+        a.result == 'timeout') {
       return 'Not working: $reason. $when.';
     }
     return 'Not working: $reason.';

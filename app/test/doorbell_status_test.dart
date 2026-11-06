@@ -170,11 +170,14 @@ void main() {
       );
     });
 
-    test('a sensor doorbell says an unknown result without a time', () {
+    test('a sensor doorbell says a timeout with a time', () {
       expect(
-        doorbellStatusText(sensor, activity('timeout')),
-        'Not working: timeout.',
+        doorbellStatusText(sensor, activity('timeout', kind: 'test')),
+        'Not working: the click service did not answer. 09:05.',
       );
+    });
+
+    test('a sensor doorbell says an unknown result without a time', () {
       expect(
         doorbellStatusText(sensor, activity('weird')),
         'Not working: weird.',

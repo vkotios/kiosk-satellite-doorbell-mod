@@ -42,6 +42,23 @@ class DoorbellClickCapture {
   final String label;
 }
 
+/// The answer a running Test waits for: the clickResult handler
+/// completes the completer with the native result and the names of
+/// the cards it could see.
+class _PendingTest {
+  _PendingTest({required this.key, required this.doorbellId});
+
+  /// The `package\nclickLabel` key the click result must match.
+  final String key;
+
+  /// The doorbell the test runs for.
+  final String doorbellId;
+
+  /// The native answer: the result and the visible card names.
+  final Completer<(String, List<String>)> completer =
+      Completer<(String, List<String>)>();
+}
+
 /// The doorbell feature: the saved doorbells and the rings it answers,
 /// in two independent sections.
 ///
@@ -90,6 +107,12 @@ class DoorbellManager extends Manager {
   @visibleForTesting
   DateTime Function() clock = DateTime.now;
 
+  /// The margin a Test waits for the native click answer over the
+  /// click delay: the 15 second search window plus 10 seconds of
+  /// slack. The tests shorten it so the timeout path runs fast.
+  @visibleForTesting
+  Duration testAnswerMargin = const Duration(seconds: 25);
+
   /// When each doorbell last opened, to ignore a ring of the same one
   /// within the dedupe window.
   final Map<String, DateTime> _opened = {};
@@ -97,6 +120,11 @@ class DoorbellManager extends Manager {
   /// The doorbell id each package and click label last opened, so a
   /// click result can find the doorbell it belongs to.
   final Map<String, String> _clickRings = {};
+
+  /// The Test a doorbellTestOpen run waits for the native answer of,
+  /// null while none runs: the clickResult handler completes it, and
+  /// a second Test is refused while one runs.
+  _PendingTest? _pendingTest;
 
   /// The last activity of each saved doorbell id, loaded from the
   /// doorbellActivity setting at init and written back on every save.
@@ -410,8 +438,8 @@ class DoorbellManager extends Manager {
     commands.register(
       Command(
         name: 'doorbellTestOpen',
-        description: 'Open a saved doorbell the way a click ring would: '
-            '{id}.',
+        description: 'Open a saved doorbell the way a click ring would, '
+            'wait for the native answer and report it: {id}.',
         params: const {'id': 'The signature id from doorbellSignatures'},
         handler: (p) async {
           if (!_settings.get(defs.doorbellSensorEnabled)) {
@@ -425,9 +453,9 @@ class DoorbellManager extends Manager {
           if (saved == null) {
             return const CommandResult.fail('no such doorbell');
           }
-          if (saved.clickLabel.isEmpty) {
+          if (!saved.isSensor) {
             return const CommandResult.fail(
-              'this doorbell has no click label',
+              'a notification doorbell is tested by a real ring',
             );
           }
           if (clickCapturing.value) {
@@ -435,8 +463,47 @@ class DoorbellManager extends Manager {
               'a camera is being taught, try again when it ends',
             );
           }
-          await commands.execute('screenOn', const {});
-          return _openByClick(saved);
+          if (_pendingTest != null) {
+            return const CommandResult.fail('a test is already running');
+          }
+          // The pending test is in place before anything is awaited, so
+          // a second Test cannot start while this one runs, and a click
+          // result pushed from inside the launch call is caught too.
+          final pending = _PendingTest(
+            key: '${saved.package}\n${saved.clickLabel}',
+            doorbellId: saved.id,
+          );
+          _pendingTest = pending;
+          String result;
+          var cards = const <String>[];
+          try {
+            await commands.execute('screenOn', const {});
+            final opened = await _openByClick(saved, reportCards: true);
+            if (!opened.ok) {
+              result = 'launch_failed';
+            } else {
+              final delay =
+                  _settings.get(defs.doorbellClickDelaySeconds).toInt();
+              try {
+                final answer = await pending.completer.future.timeout(
+                  Duration(seconds: delay) + testAnswerMargin,
+                );
+                result = answer.$1;
+                cards = answer.$2;
+              } on TimeoutException {
+                result = 'timeout';
+              }
+            }
+          } finally {
+            _pendingTest = null;
+          }
+          await _saveActivity(saved.id, 'test', result, '');
+          return CommandResult.ok({
+            'result': result,
+            'text': doorbellStatusText(saved, _activity[saved.id]),
+            'at': clock().toIso8601String(),
+            'cards': result == 'not_found' ? cards : const <String>[],
+          });
         },
       ),
     );
@@ -482,6 +549,19 @@ class DoorbellManager extends Manager {
           // The click is matched by package and label: two doorbells
           // can share a click label.
           final key = package.isEmpty ? label : '$package\n$label';
+          final pending = _pendingTest;
+          if (pending != null && pending.key == key) {
+            // The Test's own click: answer it and record the activity
+            // as a test, and tell Home Assistant nothing: a test is
+            // not a ring.
+            if (!pending.completer.isCompleted) {
+              pending.completer.complete(
+                (result, _parseCards(args['cards'])),
+              );
+            }
+            await _saveActivity(pending.doorbellId, 'test', result, '');
+            return null;
+          }
           final id = _clickRings[key];
           String? doorbell;
           if (id != null) {
@@ -773,6 +853,17 @@ class DoorbellManager extends Manager {
     return null;
   }
 
+  /// The card names a click result reports, parsed defensively: a
+  /// list of anything gives its string entries, at most 12, and
+  /// anything else an empty list.
+  static List<String> _parseCards(Object? cards) {
+    if (cards is! List) return const [];
+    return [
+      for (final card in cards)
+        if (card is String) card,
+    ].take(12).toList();
+  }
+
   /// Record a doorbell's last activity and write it to the setting:
   /// the map keeps at most 50 doorbells with the most recent last,
   /// and ids that are no longer saved are dropped.
@@ -809,8 +900,12 @@ class DoorbellManager extends Manager {
   /// from inside the launch call awaits, so the click_failed event
   /// lands after the ringing one. A launch that did not start records
   /// the doorbell's last activity as a launch failure: no click
-  /// result will arrive for it.
-  Future<CommandResult> _openByClick(DoorbellSignature s) async {
+  /// result will arrive for it. A Test asks for the card names the
+  /// click service could see with [reportCards]; a ring does not.
+  Future<CommandResult> _openByClick(
+    DoorbellSignature s, {
+    bool reportCards = false,
+  }) async {
     final opening = Completer<void>();
     _opening = opening.future;
     try {
@@ -829,6 +924,7 @@ class DoorbellManager extends Manager {
         'label': s.clickLabel,
         'delaySeconds': delay,
         'returnAfterSeconds': returnAfter,
+        'reportCards': reportCards,
       });
       if (!result.ok) {
         log.warn(

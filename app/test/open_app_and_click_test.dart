@@ -108,6 +108,7 @@ void main() {
         'label': 'Front door',
         'delaySeconds': 8,
         'windowSeconds': 15,
+        'reportCards': false,
       });
       expect(lockCalls, contains('unpin'));
       expect(lockCalls, isNot(contains('apply')));
@@ -140,6 +141,29 @@ void main() {
         true,
       );
       expect(clickCalls.last.arguments['delaySeconds'], 120);
+    });
+
+    test('reportCards is forwarded and defaults to false', () async {
+      pinned = false;
+      launchWorks = true;
+      await build({});
+      expect(
+        (await commands.execute('openAppAndClick', {
+          'package': 'com.example.doorbell',
+          'label': 'Front door',
+        })).ok,
+        true,
+      );
+      expect(clickCalls.single.arguments['reportCards'], false);
+      expect(
+        (await commands.execute('openAppAndClick', {
+          'package': 'com.example.doorbell',
+          'label': 'Front door',
+          'reportCards': true,
+        })).ok,
+        true,
+      );
+      expect(clickCalls.last.arguments['reportCards'], true);
     });
 
     test('rejects a missing package or label without unpinning', () async {
