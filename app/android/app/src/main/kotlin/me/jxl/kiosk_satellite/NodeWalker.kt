@@ -23,6 +23,9 @@ object NodeWalker {
     /** How many levels capturedTexts looks at: the clicked node, its parent, then its grandparent. */
     private const val MAX_CAPTURE_LEVELS = 3
 
+    /** How many characters a name in clickableLabels is cut to. */
+    private const val MAX_NAME_CHARS = 40
+
     /** The node to click for [label], or null.
      *  Pass 1: the exact matches in document order (depth first, children
      *  in list order, the node before its children) are tried one by one,
@@ -76,6 +79,27 @@ object NodeWalker {
             levels++
         }
         return emptyList()
+    }
+
+    /** The names of the clickable things under [root], at most [max], in
+     *  document order: for every node whose clickable flag is true, the
+     *  first text under it that qualifies as a name
+     *  (LabelMatcher.bestLabel over textsUnder), cut to 40 characters,
+     *  with duplicates dropped after LabelMatcher.normalize. These names
+     *  are shown to the owner only after a test they started, and are
+     *  never stored or logged. The walk is findClickTarget's, with the
+     *  same depth cap. */
+    fun clickableLabels(root: ClickNode, max: Int = 12): List<String> {
+        val names = ArrayList<String>()
+        val seen = HashSet<String>()
+        for (node in documentOrder(root)) {
+            if (names.size >= max) break
+            if (!node.clickable) continue
+            val name = LabelMatcher.bestLabel(textsUnder(node)) ?: continue
+            val cut = if (name.length > MAX_NAME_CHARS) name.substring(0, MAX_NAME_CHARS) else name
+            if (seen.add(LabelMatcher.normalize(cut))) names.add(cut)
+        }
+        return names
     }
 
     /** [root] and its descendants in document order: the node before its
