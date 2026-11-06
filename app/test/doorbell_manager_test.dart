@@ -156,11 +156,14 @@ void main() {
           stubCalls.add(('openAppAndClick', params));
           if (serviceOffDuringOpen) {
             // The native side pushes a service_off click result from
-            // inside the launch call, before the open returns.
+            // inside the launch call, before the open returns. The
+            // cards it would not really send prove a Test reports
+            // them only for a not_found.
             unawaited(fromNative('clickResult', {
               'package': params['package'],
               'label': params['label'],
               'result': 'service_off',
+              'cards': ['Whatever'],
             }));
           }
           return clickOpenFails
@@ -569,6 +572,7 @@ void main() {
         'label': 'Front door',
         'delaySeconds': 3,
         'returnAfterSeconds': 40,
+        'reportCards': false,
       });
     });
 
@@ -680,6 +684,7 @@ void main() {
         'label': 'Front door',
         'delaySeconds': 8,
         'returnAfterSeconds': 33,
+        'reportCards': false,
       });
       await build({
         'ks.doorbell.enabled': true,
@@ -713,6 +718,7 @@ void main() {
         'label': 'Front door',
         'delaySeconds': 8,
         'returnAfterSeconds': 75,
+        'reportCards': false,
       });
       await pumpEventQueue();
       expect(haEvents.single.data, {
@@ -983,13 +989,22 @@ void main() {
   });
 
   group('doorbellTestOpen', () {
-    test('opens by click and returns ok without an event', () async {
+    test('waits for the native answer and reports a clicked test', () async {
       await build({
         'ks.doorbell.enabled': true,
         'ks.doorbell.sensor_enabled': true,
         'ks.doorbell.signatures': savedEntityDoorbell,
       });
-      final result = await run('doorbellTestOpen', {'id': 'ring'});
+      final now = DateTime(2024, 1, 1, 9, 5);
+      doorbell.clock = () => now;
+      final pending = run('doorbellTestOpen', {'id': 'ring'});
+      await pumpEventQueue();
+      await fromNative('clickResult', {
+        'package': 'com.ring',
+        'label': 'Front door',
+        'result': 'clicked',
+      });
+      final result = await pending;
       expect(result.ok, isTrue);
       expect(stubNames(), ['screenOn', 'openAppAndClick']);
       expect(stubParams('openAppAndClick'), {
@@ -997,9 +1012,196 @@ void main() {
         'label': 'Front door',
         'delaySeconds': 8,
         'returnAfterSeconds': 75,
+        'reportCards': true,
       });
+      expect(result.data, {
+        'result': 'clicked',
+        'text': 'Ready. Last tested OK 09:05.',
+        'at': '2024-01-01T09:05:00.000',
+        'cards': [],
+      });
+      final activity = decodeDoorbellActivity(
+        settings.get(defs.doorbellActivity),
+      );
+      expect(activity['ring']!.kind, 'test');
+      expect(activity['ring']!.result, 'clicked');
       await pumpEventQueue();
       expect(haEvents, isEmpty);
+    });
+
+    test('a not_found test returns the card names it could see', () async {
+      await build({
+        'ks.doorbell.enabled': true,
+        'ks.doorbell.sensor_enabled': true,
+        'ks.doorbell.signatures': savedEntityDoorbell,
+      });
+      final now = DateTime(2024, 1, 1, 9, 5);
+      doorbell.clock = () => now;
+      final pending = run('doorbellTestOpen', {'id': 'ring'});
+      await pumpEventQueue();
+      await fromNative('clickResult', {
+        'package': 'com.ring',
+        'label': 'Front door',
+        'result': 'not_found',
+        'cards': ['Front porch', 'Back door', 7, null],
+      });
+      final result = await pending;
+      expect(result.ok, isTrue);
+      expect(result.data, {
+        'result': 'not_found',
+        'text': 'Not working: could not find the card "Front door". 09:05.',
+        'at': '2024-01-01T09:05:00.000',
+        'cards': ['Front porch', 'Back door'],
+      });
+      final activity = decodeDoorbellActivity(
+        settings.get(defs.doorbellActivity),
+      );
+      expect(activity['ring']!.kind, 'test');
+      expect(activity['ring']!.result, 'not_found');
+      await pumpEventQueue();
+      expect(haEvents, isEmpty);
+    });
+
+    test('the card names are strings only and at most twelve', () async {
+      await build({
+        'ks.doorbell.enabled': true,
+        'ks.doorbell.sensor_enabled': true,
+        'ks.doorbell.signatures': savedEntityDoorbell,
+      });
+      final pending = run('doorbellTestOpen', {'id': 'ring'});
+      await pumpEventQueue();
+      await fromNative('clickResult', {
+        'package': 'com.ring',
+        'label': 'Front door',
+        'result': 'not_found',
+        'cards': [
+          for (var i = 1; i <= 14; i++) 'Card $i',
+          42,
+          true,
+        ],
+      });
+      final result = await pending;
+      expect((result.data as Map)['cards'], [
+        for (var i = 1; i <= 12; i++) 'Card $i',
+      ]);
+    });
+
+    test('a service_off pushed from inside the launch is the answer',
+        () async {
+      await build(
+        {
+          'ks.doorbell.enabled': true,
+          'ks.doorbell.sensor_enabled': true,
+          'ks.doorbell.signatures': savedEntityDoorbell,
+        },
+        serviceOffDuringOpen: true,
+      );
+      final result = await run('doorbellTestOpen', {'id': 'ring'});
+      expect(result.ok, isTrue);
+      expect((result.data as Map)['result'], 'service_off');
+      expect((result.data as Map)['cards'], isEmpty);
+      await pumpEventQueue();
+      expect(haEvents, isEmpty);
+      final activity = decodeDoorbellActivity(
+        settings.get(defs.doorbellActivity),
+      );
+      expect(activity['ring']!.kind, 'test');
+      expect(activity['ring']!.result, 'service_off');
+    });
+
+    test('a launch that does not start reports launch_failed', () async {
+      await build(
+        {
+          'ks.doorbell.enabled': true,
+          'ks.doorbell.sensor_enabled': true,
+          'ks.doorbell.signatures': savedEntityDoorbell,
+        },
+        openClickFails: true,
+      );
+      final result = await run('doorbellTestOpen', {'id': 'ring'});
+      expect(result.ok, isTrue);
+      final data = result.data as Map;
+      expect(data['result'], 'launch_failed');
+      expect(data['text'], startsWith('Not working: could not open the app'));
+      final activity = decodeDoorbellActivity(
+        settings.get(defs.doorbellActivity),
+      );
+      expect(activity['ring']!.kind, 'test');
+      expect(activity['ring']!.result, 'launch_failed');
+      expect(activity['ring']!.detail, '');
+    });
+
+    test('a native side that never answers reports timeout', () async {
+      await build({
+        'ks.doorbell.enabled': true,
+        'ks.doorbell.sensor_enabled': true,
+        'ks.doorbell.click_delay_seconds': 0,
+        'ks.doorbell.signatures': savedEntityDoorbell,
+      });
+      doorbell.testAnswerMargin = const Duration(milliseconds: 30);
+      final now = DateTime(2024, 1, 1, 9, 5);
+      doorbell.clock = () => now;
+      final result = await run('doorbellTestOpen', {'id': 'ring'});
+      expect(result.ok, isTrue);
+      expect(result.data, {
+        'result': 'timeout',
+        'text': 'Not working: the click service did not answer. 09:05.',
+        'at': '2024-01-01T09:05:00.000',
+        'cards': [],
+      });
+      final activity = decodeDoorbellActivity(
+        settings.get(defs.doorbellActivity),
+      );
+      expect(activity['ring']!.kind, 'test');
+      expect(activity['ring']!.result, 'timeout');
+      await pumpEventQueue();
+      expect(haEvents, isEmpty);
+    });
+
+    test('a second test while one runs is refused', () async {
+      await build({
+        'ks.doorbell.enabled': true,
+        'ks.doorbell.sensor_enabled': true,
+        'ks.doorbell.click_delay_seconds': 0,
+        'ks.doorbell.signatures': savedEntityDoorbell,
+      });
+      doorbell.testAnswerMargin = const Duration(milliseconds: 30);
+      final first = run('doorbellTestOpen', {'id': 'ring'});
+      final second = await run('doorbellTestOpen', {'id': 'ring'});
+      expect(second.ok, isFalse);
+      expect(second.error, 'a test is already running');
+      final firstResult = await first;
+      expect((firstResult.data as Map)['result'], 'timeout');
+      expect(stubNames(), ['screenOn', 'openAppAndClick']);
+    });
+
+    test('a click result after the test ended is a ring again', () async {
+      await build({
+        'ks.doorbell.enabled': true,
+        'ks.doorbell.sensor_enabled': true,
+        'ks.doorbell.click_delay_seconds': 0,
+        'ks.doorbell.signatures': savedEntityDoorbell,
+      });
+      doorbell.testAnswerMargin = const Duration(milliseconds: 30);
+      final result = await run('doorbellTestOpen', {'id': 'ring'});
+      expect((result.data as Map)['result'], 'timeout');
+      await fromNative('clickResult', {
+        'package': 'com.ring',
+        'label': 'Front door',
+        'result': 'not_found',
+      });
+      await pumpEventQueue();
+      expect(haEvents.single.data, {
+        'event_type': 'click_failed',
+        'doorbell': 'Ring',
+        'label': 'Front door',
+        'reason': 'not_found',
+      });
+      final activity = decodeDoorbellActivity(
+        settings.get(defs.doorbellActivity),
+      );
+      expect(activity['ring']!.kind, 'ring');
+      expect(activity['ring']!.result, 'not_found');
     });
 
     test('fails while the sensor setting is off', () async {
@@ -1025,7 +1227,7 @@ void main() {
       expect(stubCalls, isEmpty);
     });
 
-    test('fails without a click label', () async {
+    test('fails for a notification doorbell', () async {
       await build({
         'ks.doorbell.enabled': true,
         'ks.doorbell.sensor_enabled': true,
@@ -1033,7 +1235,7 @@ void main() {
       });
       final result = await run('doorbellTestOpen', {'id': 'eufy'});
       expect(result.ok, isFalse);
-      expect(result.error, 'this doorbell has no click label');
+      expect(result.error, 'a notification doorbell is tested by a real ring');
       expect(stubCalls, isEmpty);
     });
 
