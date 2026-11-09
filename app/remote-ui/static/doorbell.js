@@ -223,10 +223,10 @@ const TEST_REASONS = {
 };
 
 const TESTING_TEXT = 'Testing... the tablet opens the doorbell app and tries to tap'
-  + ' the camera. This takes up to 30 seconds.';
+  + ' the camera. This can take up to a minute.';
 
 // A Test: the tablet opens the doorbell app and taps the taught card,
-// which takes up to ~40 seconds. The row says so while it runs, then
+// which takes up to a minute. The row says so while it runs, then
 // the outcome: the ready line on a click, the status text and the
 // reason on a miss, with the card names the app showed as one-tap
 // corrections. Then the list reloads.
@@ -329,7 +329,7 @@ const editDoorbell = (doorbell) => {
   pick.textContent = 'Pick';
   pick.addEventListener('click', async () => {
     const picked = await pickEntity({ title: 'Ringing sensor', selected: entity || null,
-      domains: ['binary_sensor'], allowClear: true });
+      domains: ['binary_sensor'] });
     if (picked) { entity = picked.id || ''; paintEntity(); }
   });
   const entityRow = document.createElement('div');
