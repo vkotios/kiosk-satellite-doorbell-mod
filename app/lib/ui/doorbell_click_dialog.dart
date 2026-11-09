@@ -264,6 +264,28 @@ Future<bool> showDoorbellClickDialog(
     return 'the test failed';
   }
 
+  // The card the doorbell is saved with now, for the Ready screen's
+  // text and a later re-save: a card picked in the test dialog was
+  // saved there by id. Empty when it cannot be read.
+  Future<String> savedClickCard(
+    BuildContext dialogContext,
+    StateSetter setState,
+  ) async {
+    final result = await runCommand(
+      dialogContext,
+      setState,
+      'doorbellSignatures',
+      const {},
+    );
+    if (result == null || !result.ok || result.data is! List) return '';
+    for (final entry in result.data as List) {
+      if (entry is Map && '${entry['id'] ?? ''}' == savedId) {
+        return '${entry['clickLabel'] ?? ''}';
+      }
+    }
+    return '';
+  }
+
   // Run the real test for the doorbell this run saved, in the test
   // dialog: it opens the app, tries the tap and shows the outcome
   // itself. The Ready screen shows only when it says the tap worked;
@@ -279,6 +301,13 @@ Future<bool> showDoorbellClickDialog(
       label: nameController.text.trim(),
     );
     if (!dialogContext.mounted) return;
+    // A card picked in the test dialog was saved there by id: the
+    // wizard's card text must follow it before the screens read it.
+    final card = await savedClickCard(dialogContext, setState);
+    if (!dialogContext.mounted) return;
+    if (card.isNotEmpty && card != labelController.text.trim()) {
+      labelController.text = card;
+    }
     if (passed) {
       setState(() => screen = 'done');
       return;
@@ -715,7 +744,7 @@ Future<bool> showDoorbellClickDialog(
               padding: EdgeInsets.only(top: 12),
               child: Text(
                 'Press Save and test. I save the doorbell, open the app '
-                'and try the tap. It takes up to 30 seconds. Do not '
+                'and try the tap. It can take up to a minute. Do not '
                 'touch the tablet while it runs.',
               ),
             ),
