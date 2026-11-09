@@ -44,7 +44,7 @@ A sensor & tap doorbell needs **Doorbell click access**, an Android Accessibilit
 2. **Allow Kiosk Satellite to tap**: turn on Doorbell click access; the step shows whether the service runs and its button opens Android's Accessibility settings.
 3. **Show me the camera**: the wizard opens the doorbell app, you tap the camera of this doorbell in the app, and the wizard comes back with the card's name, which you can correct or teach again.
 4. **Name it and choose its sensor**: give the doorbell its name and pick the Home Assistant binary_sensor that is on while it rings.
-5. **Save and test**: the wizard saves the doorbell and runs the Test open, which takes up to 30 seconds and ends with the doorbell ready or the reason it is not.
+5. **Save and test**: the wizard saves the doorbell and runs the Test open, which takes up to a minute and ends with the doorbell ready or the reason it is not.
 
 When the sensor turns on, the kiosk wakes the screen and opens the doorbell app fresh, at its home screen. It waits the **Wait before tapping (seconds)** time for the app to load, then looks for the card for 15 seconds and taps it once found. It comes back after the **Return after a ring (seconds)** time, never sooner than the wait plus 25 seconds, so it never returns while the search is still running.
 
@@ -56,7 +56,7 @@ A sensor that is already on when the kiosk connects does not ring: only the sens
 
 Each doorbell's row shows a status line, the same text on the tablet and in the admin panel. A notification doorbell starts at `Waiting for the first ring.`, then says `Working. Last ring opened 12:10.` or `Last ring at 12:10 did not open.` A sensor & tap doorbell starts at `Not tested yet. Press Test.`, then says `Ready. Last tested OK 12:10.` or `Ready. Last ring opened 12:10.` when its last test or ring worked, and `Not working: could not find the card "Front Door". 12:10.` when it did not. A doorbell is ready when its last test or ring worked.
 
-**Test**, on a sensor & tap doorbell's row, runs the whole open the way a ring will: it wakes the screen, opens the app fresh, waits and taps the card, and waits up to about 30 seconds for the answer. A notification doorbell has no Test; only a real ring tells whether it works. When the card is not found, Test lists the names of the cards it could see in the doorbell app, so you can pick the right one: tapping a name saves it as the doorbell's card and tests again.
+**Test**, on a sensor & tap doorbell's row, runs the whole open the way a ring will: it wakes the screen, opens the app fresh, waits and taps the card, and waits up to about a minute for the answer, longer if the **Wait before tapping (seconds)** setting is raised. A notification doorbell has no Test; only a real ring tells whether it works. When the card is not found, Test lists the names of the cards it could see in the doorbell app, so you can pick the right one: tapping a name saves it as the doorbell's card and tests again.
 
 ## What You Can Do Where
 

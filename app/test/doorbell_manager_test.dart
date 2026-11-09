@@ -812,6 +812,46 @@ void main() {
       expect(haEvents, hasLength(2));
     });
 
+    test('a stored click delay of 600 is used as 120', () async {
+      await build({
+        'ks.doorbell.enabled': true,
+        'ks.doorbell.sensor_enabled': true,
+        'ks.doorbell.click_delay_seconds': 600,
+        'ks.doorbell.signatures': savedEntityDoorbell,
+      });
+      var now = DateTime(2024, 1, 1);
+      doorbell.clock = () => now;
+      await doorbell.ringFromEntity('ring');
+      expect(stubParams('openAppAndClick')['delaySeconds'], 120);
+      await pumpEventQueue();
+      expect(haEvents, hasLength(1));
+      now = now.add(const Duration(seconds: 100));
+      await doorbell.ringFromEntity('ring');
+      await pumpEventQueue();
+      expect(haEvents, hasLength(1));
+      now = now.add(const Duration(seconds: 30));
+      await doorbell.ringFromEntity('ring');
+      await pumpEventQueue();
+      expect(haEvents, hasLength(1));
+      // A fresh open at t=0: the window is 140 s, not 620 s, so a
+      // ring 141 s later is answered.
+      await build({
+        'ks.doorbell.enabled': true,
+        'ks.doorbell.sensor_enabled': true,
+        'ks.doorbell.click_delay_seconds': 600,
+        'ks.doorbell.signatures': savedEntityDoorbell,
+      });
+      now = DateTime(2024, 1, 1);
+      doorbell.clock = () => now;
+      await doorbell.ringFromEntity('ring');
+      await pumpEventQueue();
+      expect(haEvents, hasLength(1));
+      now = now.add(const Duration(seconds: 141));
+      await doorbell.ringFromEntity('ring');
+      await pumpEventQueue();
+      expect(haEvents, hasLength(2));
+    });
+
     test('is ignored while a camera is being taught, without starting '
         'the window', () async {
       await build({
@@ -827,6 +867,33 @@ void main() {
       doorbell.clickCapturing.value = false;
       await doorbell.ringFromEntity('ring');
       expect(stubNames(), ['screenOn', 'openAppAndClick']);
+      await pumpEventQueue();
+      expect(haEvents, hasLength(1));
+    });
+
+    test('is ignored while a Test runs, and one after it works', () async {
+      await build({
+        'ks.doorbell.enabled': true,
+        'ks.doorbell.sensor_enabled': true,
+        'ks.doorbell.click_delay_seconds': 0,
+        'ks.doorbell.signatures': savedEntityDoorbell,
+      });
+      doorbell.testAnswerMargin = const Duration(milliseconds: 30);
+      final pending = run('doorbellTestOpen', {'id': 'ring'});
+      await pumpEventQueue();
+      await doorbell.ringFromEntity('ring');
+      expect(stubNames(), ['screenOn', 'openAppAndClick']);
+      await pumpEventQueue();
+      expect(haEvents, isEmpty);
+      final result = await pending;
+      expect((result.data as Map)['result'], 'timeout');
+      await doorbell.ringFromEntity('ring');
+      expect(stubNames(), [
+        'screenOn',
+        'openAppAndClick',
+        'screenOn',
+        'openAppAndClick',
+      ]);
       await pumpEventQueue();
       expect(haEvents, hasLength(1));
     });
@@ -1175,6 +1242,41 @@ void main() {
       expect(stubNames(), ['screenOn', 'openAppAndClick']);
     });
 
+    test('is refused right after a ring opened, until its click answers',
+        () async {
+      await build({
+        'ks.doorbell.enabled': true,
+        'ks.doorbell.sensor_enabled': true,
+        'ks.doorbell.signatures': savedEntityDoorbell,
+      });
+      await doorbell.ringFromEntity('ring');
+      final refused = await run('doorbellTestOpen', {'id': 'ring'});
+      expect(refused.ok, isFalse);
+      expect(refused.error, 'a doorbell is opening, try again in a moment');
+      await fromNative('clickResult', {
+        'package': 'com.ring',
+        'label': 'Front door',
+        'result': 'clicked',
+      });
+      await pumpEventQueue();
+      final first = run('doorbellTestOpen', {'id': 'ring'});
+      await pumpEventQueue();
+      await fromNative('clickResult', {
+        'package': 'com.ring',
+        'label': 'Front door',
+        'result': 'clicked',
+      });
+      expect(((await first).data as Map)['result'], 'clicked');
+      final second = run('doorbellTestOpen', {'id': 'ring'});
+      await pumpEventQueue();
+      await fromNative('clickResult', {
+        'package': 'com.ring',
+        'label': 'Front door',
+        'result': 'clicked',
+      });
+      expect(((await second).data as Map)['result'], 'clicked');
+    });
+
     test('a click result after the test ended is a ring again', () async {
       await build({
         'ks.doorbell.enabled': true,
@@ -1388,6 +1490,13 @@ void main() {
       ]);
     });
 
+    test('doorbellSignatures is registered quiet', () async {
+      await build({'ks.doorbell.enabled': true});
+      final command = doorbell.commands.all
+          .firstWhere((command) => command.name == 'doorbellSignatures');
+      expect(command.quiet, isTrue);
+    });
+
     test('doorbellAddSignature builds the id from the label', () async {
       await build({});
       final result = await run('doorbellAddSignature', {
@@ -1415,7 +1524,7 @@ void main() {
       final second = await run('doorbellAddSignature', {
         'label': ' - Front Door - ',
         'package': 'p',
-        'channelPrefix': 'c',
+        'channelPrefix': 'c2',
       });
       expect((second.data as Map)['id'], 'front-door');
     });
@@ -1434,6 +1543,52 @@ void main() {
         'channelPrefix': 'c3',
       });
       expect((third.data as Map)['id'], 'eufy-3');
+    });
+
+    test('doorbellAddSignature refuses a doorbell that is already added',
+        () async {
+      await build({});
+      final first = await run('doorbellAddSignature', {
+        'label': 'Eufy',
+        'package': 'com.eufy',
+        'channelPrefix': 'pre',
+      });
+      expect(first.ok, isTrue);
+      final sameChannel = await run('doorbellAddSignature', {
+        'label': 'Eufy again',
+        'package': 'com.eufy',
+        'channelPrefix': 'pre',
+      });
+      expect(sameChannel.ok, isFalse);
+      expect(sameChannel.error, 'that doorbell is already added');
+      final otherChannel = await run('doorbellAddSignature', {
+        'label': 'Eufy motion',
+        'package': 'com.eufy',
+        'channelPrefix': 'motion',
+      });
+      expect(otherChannel.ok, isTrue);
+      final front = await run('doorbellAddSignature', {
+        'label': 'Ring',
+        'package': 'com.ring',
+        'entity': 'binary_sensor.front_door',
+        'clickLabel': 'Front door',
+      });
+      expect(front.ok, isTrue);
+      final sameEntity = await run('doorbellAddSignature', {
+        'label': 'Ring again',
+        'package': 'com.ring',
+        'entity': 'binary_sensor.front_door',
+        'clickLabel': 'Porch',
+      });
+      expect(sameEntity.ok, isFalse);
+      expect(sameEntity.error, 'that doorbell is already added');
+      final back = await run('doorbellAddSignature', {
+        'label': 'Ring back',
+        'package': 'com.ring',
+        'entity': 'binary_sensor.back_door',
+        'clickLabel': 'Back door',
+      });
+      expect(back.ok, isTrue);
     });
 
     test('doorbellAddSignature requires a label, a package and a '

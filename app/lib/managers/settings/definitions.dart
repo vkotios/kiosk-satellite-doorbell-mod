@@ -1551,6 +1551,7 @@ const doorbellClickDelaySeconds = SettingDef<num>(
   type: SettingType.number,
   defaultValue: 8,
   min: 0,
+  max: 120,
   title: 'Wait before tapping (seconds)',
   description:
       'How long after the doorbell app opens the kiosk waits before it '

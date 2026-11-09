@@ -15,7 +15,8 @@ import android.util.Log
  *
  * Other notifications are looked at only by package, channel and flags;
  * their title and extras are read only for a saved doorbell's ring, or
- * during the capture window the user starts, and are never stored or logged. A
+ * during the capture window the user starts, and are never stored; a saved
+ * doorbell's ring title appears in the device log and the kiosk log. A
  * matched ring's tap action goes to [DoorbellBridge], so the right
  * doorbell's live view can open over the kiosk.
  */
