@@ -8,7 +8,7 @@ import 'toast.dart';
 
 /// The Test dialog: opens one saved sensor & tap doorbell the way a
 /// ring would and shows the outcome. The command runs once at open,
-/// waits for the native answer (up to about 40 seconds) and stores the
+/// waits for the native answer (up to a minute) and stores the
 /// doorbell's last activity, so the list's status line changes with
 /// it. When the card was not found the dialog can offer the card names
 /// the app did show: tapping one saves it as the doorbell's card and
@@ -193,7 +193,7 @@ Future<bool> showDoorbellTestDialog(
               SizedBox(height: 16),
               Text(
                 'Opening the doorbell app and trying to tap the camera. '
-                'This takes up to 30 seconds. Do not touch the tablet.',
+                'This can take up to a minute. Do not touch the tablet.',
               ),
             ],
           );
@@ -286,7 +286,7 @@ Future<bool> showDoorbellTestDialog(
           content: SizedBox(width: 420, child: content),
           actions: [
             TextButton(
-              onPressed: () => Navigator.pop(dialogContext),
+              onPressed: running ? null : () => Navigator.pop(dialogContext),
               child: const Text('Close'),
             ),
             if (!running)
