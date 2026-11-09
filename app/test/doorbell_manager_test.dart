@@ -47,6 +47,10 @@ void main() {
   /// Whether the mocked native click service reports itself running.
   late bool clickServiceRunning;
 
+  /// While set, the screenOn stub waits for it before answering: a
+  /// test holds a ring mid-launch.
+  Completer<void>? screenOnHold;
+
   const eufy = {
     'id': 'eufy',
     'label': 'Eufy Security',
@@ -111,6 +115,7 @@ void main() {
     openFails = openNotificationFails;
     clickOpenFails = openClickFails;
     clickServiceRunning = true;
+    screenOnHold = null;
     messenger.setMockMethodCallHandler(channel, (call) async {
       nativeCalls.add(call);
       final thrown = nativeError;
@@ -132,6 +137,8 @@ void main() {
         description: 'stub',
         handler: (params) async {
           stubCalls.add(('screenOn', params));
+          final hold = screenOnHold;
+          if (hold != null) await hold.future;
           return const CommandResult.ok();
         },
       ),
@@ -1277,6 +1284,54 @@ void main() {
       expect(((await second).data as Map)['result'], 'clicked');
     });
 
+    test('is refused while a ring is still launching', () async {
+      await build({
+        'ks.doorbell.enabled': true,
+        'ks.doorbell.sensor_enabled': true,
+        'ks.doorbell.signatures': savedEntityDoorbell,
+      });
+      screenOnHold = Completer<void>();
+      final ringing = doorbell.ringFromEntity('ring');
+      await pumpEventQueue();
+      final refused = await run('doorbellTestOpen', {'id': 'ring'});
+      expect(refused.ok, isFalse);
+      expect(refused.error, 'a doorbell is opening, try again in a moment');
+      screenOnHold!.complete();
+      await ringing;
+      await pumpEventQueue();
+      await fromNative('clickResult', {
+        'package': 'com.ring',
+        'label': 'Front door',
+        'result': 'clicked',
+      });
+      await pumpEventQueue();
+      final attempt = run('doorbellTestOpen', {'id': 'ring'});
+      await pumpEventQueue();
+      await fromNative('clickResult', {
+        'package': 'com.ring',
+        'label': 'Front door',
+        'result': 'clicked',
+      });
+      expect(((await attempt).data as Map)['result'], 'clicked');
+    });
+
+    test('a click result pushed from inside the launch leaves no busy '
+        'marker', () async {
+      await build(
+        {
+          'ks.doorbell.enabled': true,
+          'ks.doorbell.sensor_enabled': true,
+          'ks.doorbell.signatures': savedEntityDoorbell,
+        },
+        serviceOffDuringOpen: true,
+      );
+      await doorbell.ringFromEntity('ring');
+      await pumpEventQueue();
+      final result = await run('doorbellTestOpen', {'id': 'ring'});
+      expect(result.ok, isTrue);
+      expect((result.data as Map)['result'], 'service_off');
+    });
+
     test('a click result after the test ended is a ring again', () async {
       await build({
         'ks.doorbell.enabled': true,
@@ -1968,6 +2023,93 @@ void main() {
         decodeDoorbellActivity(settings.get(defs.doorbellActivity)).keys,
         ['ring'],
       );
+    });
+
+    test('doorbellUpdateSignature refuses a doorbell that is already '
+        'added', () async {
+      await build({});
+      await run('doorbellAddSignature', {
+        'label': 'Front',
+        'package': 'com.ring',
+        'entity': 'binary_sensor.front_door',
+        'clickLabel': 'Front door',
+      });
+      await run('doorbellAddSignature', {
+        'label': 'Back',
+        'package': 'com.ring',
+        'entity': 'binary_sensor.back_door',
+        'clickLabel': 'Back door',
+      });
+      await run('doorbellAddSignature', {
+        'label': 'Other',
+        'package': 'com.other',
+        'entity': 'binary_sensor.other_door',
+        'clickLabel': 'Other door',
+      });
+      final sameEntity = await run('doorbellUpdateSignature', {
+        'id': 'back',
+        'entity': 'binary_sensor.front_door',
+      });
+      expect(sameEntity.ok, isFalse);
+      expect(sameEntity.error, 'that doorbell is already added');
+      expect(
+        decodeDoorbellSignatures(settings.get(defs.doorbellSignatures))
+            .singleWhere((signature) => signature.id == 'back')
+            .entity,
+        'binary_sensor.back_door',
+      );
+      final relabelled = await run('doorbellUpdateSignature', {
+        'id': 'back',
+        'label': 'Back door',
+      });
+      expect(relabelled.ok, isTrue);
+      final resaved = await run('doorbellUpdateSignature', {
+        'id': 'back',
+        'entity': 'binary_sensor.back_door',
+      });
+      expect(resaved.ok, isTrue);
+      final otherEntity = await run('doorbellUpdateSignature', {
+        'id': 'back',
+        'entity': 'binary_sensor.side_door',
+      });
+      expect(otherEntity.ok, isTrue);
+      final otherPackage = await run('doorbellUpdateSignature', {
+        'id': 'other',
+        'entity': 'binary_sensor.front_door',
+      });
+      expect(otherPackage.ok, isTrue);
+      await run('doorbellAddSignature', {
+        'label': 'Eufy',
+        'package': 'com.eufy',
+        'channelPrefix': 'ring',
+      });
+      await run('doorbellAddSignature', {
+        'label': 'Eufy motion',
+        'package': 'com.eufy',
+        'channelPrefix': 'motion',
+      });
+      final sameChannel = await run('doorbellUpdateSignature', {
+        'id': 'eufy-motion',
+        'channelPrefix': 'ring',
+      });
+      expect(sameChannel.ok, isFalse);
+      expect(sameChannel.error, 'that doorbell is already added');
+      expect(
+        decodeDoorbellSignatures(settings.get(defs.doorbellSignatures))
+            .singleWhere((signature) => signature.id == 'eufy-motion')
+            .channelPrefix,
+        'motion',
+      );
+      final ownChannel = await run('doorbellUpdateSignature', {
+        'id': 'eufy-motion',
+        'channelPrefix': 'motion',
+      });
+      expect(ownChannel.ok, isTrue);
+      final otherChannel = await run('doorbellUpdateSignature', {
+        'id': 'eufy-motion',
+        'channelPrefix': 'person',
+      });
+      expect(otherChannel.ok, isTrue);
     });
 
     test('an entity is lower-cased, and one that is not an entity id fails',

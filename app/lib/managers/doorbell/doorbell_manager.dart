@@ -138,7 +138,7 @@ class DoorbellManager extends Manager {
   /// While set and still in the future, a ring's click job may still be
   /// running natively, and a Test must not start over it: the native
   /// side runs one click job at a time, and starting a second cancels
-  /// the first. Set when a ring opened by click, cleared when its
+  /// the first. Set before a ring launches its click, cleared when its
   /// click result arrives.
   DateTime? _clickBusyUntil;
 
@@ -275,25 +275,8 @@ class DoorbellManager extends Manager {
           );
           final problem = _problem(signature);
           if (problem != null) return CommandResult.fail(problem);
-          // A doorbell of the same package that rings the same way is a
-          // duplicate: the same channel for a notification doorbell, the
-          // same entity for a sensor & tap one. Two sensor & tap doorbells
-          // of one package with different entities stay allowed: the front
-          // and the back door of one camera app.
-          for (final existing in signatures) {
-            if (existing.package != package) continue;
-            if (entity.isEmpty) {
-              if (existing.isNotification &&
-                  existing.channelPrefix == channelPrefix) {
-                return const CommandResult.fail(
-                  'that doorbell is already added',
-                );
-              }
-            } else if (existing.isSensor && existing.entity == entity) {
-              return const CommandResult.fail(
-                'that doorbell is already added',
-              );
-            }
+          if (_isDuplicate(signature)) {
+            return const CommandResult.fail('that doorbell is already added');
           }
           signatures.add(signature);
           await _settings.set(
@@ -385,6 +368,14 @@ class DoorbellManager extends Manager {
           );
           final problem = _problem(merged);
           if (problem != null) return CommandResult.fail(problem);
+          // A change of the entity or the channel is checked against the
+          // other doorbells of the same package: an old duplicate saved
+          // before this rule must stay editable by label or card.
+          if ((merged.entity != saved.entity ||
+                  merged.channelPrefix != saved.channelPrefix) &&
+              _isDuplicate(merged, exceptId: saved.id)) {
+            return const CommandResult.fail('that doorbell is already added');
+          }
           signatures[index] = merged;
           await _settings.set(
             defs.doorbellSignatures,
@@ -859,10 +850,14 @@ class DoorbellManager extends Manager {
       }));
       return;
     }
+    // The busy marker is in place before the first await, so a Test
+    // cannot start while the ring is still launching.
+    _clickBusyUntil = clock().add(Duration(seconds: _clickDelay + 15 + 5));
     await commands.execute('screenOn', const {});
     final result = await _openByClick(saved);
-    if (result.ok) {
-      _clickBusyUntil = clock().add(Duration(seconds: _clickDelay + 15 + 5));
+    if (!result.ok) {
+      // The launch failed: no click job runs, so a Test may start.
+      _clickBusyUntil = null;
     }
     bus.publish(HaEventRequested('kiosk_satellite_doorbell', {
       'event_type': 'ringing',
@@ -917,6 +912,28 @@ class DoorbellManager extends Manager {
       return 'a notification doorbell needs a notification channel';
     }
     return null;
+  }
+
+  /// Whether [candidate] rings the same way as another saved doorbell
+  /// of the same package: the same channel for a notification doorbell,
+  /// the same entity for a sensor & tap one. Two sensor & tap doorbells
+  /// of one package with different entities stay allowed: the front
+  /// and the back door of one camera app. [exceptId] leaves a saved
+  /// doorbell out, so an update can change itself.
+  bool _isDuplicate(DoorbellSignature candidate, {String? exceptId}) {
+    for (final existing in _signatures) {
+      if (existing.id == exceptId) continue;
+      if (existing.package != candidate.package) continue;
+      if (candidate.isNotification) {
+        if (existing.isNotification &&
+            existing.channelPrefix == candidate.channelPrefix) {
+          return true;
+        }
+      } else if (existing.isSensor && existing.entity == candidate.entity) {
+        return true;
+      }
+    }
+    return false;
   }
 
   /// The card names a click result reports, parsed defensively: a
