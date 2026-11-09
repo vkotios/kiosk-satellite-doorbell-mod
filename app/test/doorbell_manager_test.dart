@@ -1735,6 +1735,86 @@ void main() {
       expect(settings.get(defs.doorbellSignatures), savedEufy);
     });
 
+    test('doorbellUpdateSignature clears the activity when the card '
+        'changes', () async {
+      await build({
+        'ks.doorbell.signatures': savedEntityDoorbell,
+        'ks.internal.doorbell_activity':
+            '{"ring":{"at":"2024-01-01T09:05:00","kind":"test",'
+            '"result":"not_found","detail":""}}',
+      });
+      final result = await run('doorbellUpdateSignature', {
+        'id': 'ring',
+        'clickLabel': 'Back door',
+      });
+      expect(result.ok, isTrue);
+      final saved = await run('doorbellSignatures');
+      expect(saved.data, [
+        {
+          'id': 'ring',
+          'label': 'Ring',
+          'package': 'com.ring',
+          'channelPrefix': '',
+          'entity': 'binary_sensor.front_door_ringing',
+          'open': 'click',
+          'clickLabel': 'Back door',
+          'kind': 'sensor',
+          'statusText': 'Not tested yet. Press Test.',
+          'state': 'untested',
+        },
+      ]);
+      expect(settings.get(defs.doorbellActivity), '{}');
+    });
+
+    test('doorbellUpdateSignature keeps the activity when only the label '
+        'changes', () async {
+      await build({
+        'ks.doorbell.signatures': savedEntityDoorbell,
+        'ks.internal.doorbell_activity':
+            '{"ring":{"at":"2024-01-01T09:05:00","kind":"test",'
+            '"result":"not_found","detail":""}}',
+      });
+      final before = await run('doorbellSignatures');
+      final statusBefore = (before.data as List).first['statusText'];
+      expect(
+        statusBefore,
+        'Not working: could not find the card "Front door". 09:05.',
+      );
+      final result = await run('doorbellUpdateSignature', {
+        'id': 'ring',
+        'label': 'Ring 2',
+      });
+      expect(result.ok, isTrue);
+      final after = await run('doorbellSignatures');
+      expect((after.data as List).first['statusText'], statusBefore);
+      expect(
+        decodeDoorbellActivity(settings.get(defs.doorbellActivity)).keys,
+        ['ring'],
+      );
+    });
+
+    test('doorbellUpdateSignature keeps the activity when the card is set '
+        'to the same name', () async {
+      await build({
+        'ks.doorbell.signatures': savedEntityDoorbell,
+        'ks.internal.doorbell_activity':
+            '{"ring":{"at":"2024-01-01T09:05:00","kind":"test",'
+            '"result":"not_found","detail":""}}',
+      });
+      final result = await run('doorbellUpdateSignature', {
+        'id': 'ring',
+        'clickLabel': 'Front door',
+      });
+      expect(result.ok, isTrue);
+      final saved = await run('doorbellSignatures');
+      expect((saved.data as List).first['statusText'],
+          'Not working: could not find the card "Front door". 09:05.');
+      expect(
+        decodeDoorbellActivity(settings.get(defs.doorbellActivity)).keys,
+        ['ring'],
+      );
+    });
+
     test('an entity is lower-cased, and one that is not an entity id fails',
         () async {
       await build({'ks.doorbell.enabled': true});

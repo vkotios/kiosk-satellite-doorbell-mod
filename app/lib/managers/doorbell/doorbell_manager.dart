@@ -357,6 +357,19 @@ class DoorbellManager extends Manager {
             defs.doorbellSignatures,
             encodeDoorbellSignatures(signatures),
           );
+          // The saved activity no longer describes the doorbell when
+          // its click target or its section changed: clear it the way
+          // the remove command does, so the status does not describe
+          // the new card with the old result.
+          if (merged.clickLabel != saved.clickLabel ||
+              merged.isSensor != saved.isSensor) {
+            if (_activity.remove(id) != null) {
+              await _settings.set(
+                defs.doorbellActivity,
+                encodeDoorbellActivity(_activity),
+              );
+            }
+          }
           return CommandResult.ok(merged.toJson());
         },
       ),
