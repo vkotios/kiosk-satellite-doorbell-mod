@@ -135,13 +135,25 @@ class DoorbellManager extends Manager {
   /// click_failed event lands after the ringing event of that open.
   Future<void>? _opening;
 
+  /// While set and still in the future, a ring's click job may still be
+  /// running natively, and a Test must not start over it: the native
+  /// side runs one click job at a time, and starting a second cancels
+  /// the first. Set when a ring opened by click, cleared when its
+  /// click result arrives.
+  DateTime? _clickBusyUntil;
+
+  /// The click delay setting, clamped to the 0..120 range its
+  /// definition allows: a value stored before the cap cannot stretch
+  /// the click wait over two minutes.
+  int get _clickDelay =>
+      _settings.get(defs.doorbellClickDelaySeconds).toInt().clamp(0, 120);
+
   /// The window a ring of a doorbell is ignored over after it opened:
   /// never shorter than the old 20 seconds, and always long enough to
   /// cover the click wait: the delay, the 15 second search window and
   /// a margin.
   int get _dedupeSeconds {
-    final delay = _settings.get(defs.doorbellClickDelaySeconds).toInt();
-    final clickWait = delay + 15 + 5;
+    final clickWait = _clickDelay + 15 + 5;
     return clickWait > 20 ? clickWait : 20;
   }
 
@@ -206,6 +218,7 @@ class DoorbellManager extends Manager {
             'The saved doorbells: [{id, label, package, channelPrefix, '
             'kind, statusText, state}], with the optional keys entity, '
             'open and clickLabel; kind is notification or sensor.',
+        quiet: true,
         handler: (_) async => CommandResult.ok([
           for (final signature in _signatures)
             {
@@ -262,6 +275,26 @@ class DoorbellManager extends Manager {
           );
           final problem = _problem(signature);
           if (problem != null) return CommandResult.fail(problem);
+          // A doorbell of the same package that rings the same way is a
+          // duplicate: the same channel for a notification doorbell, the
+          // same entity for a sensor & tap one. Two sensor & tap doorbells
+          // of one package with different entities stay allowed: the front
+          // and the back door of one camera app.
+          for (final existing in signatures) {
+            if (existing.package != package) continue;
+            if (entity.isEmpty) {
+              if (existing.isNotification &&
+                  existing.channelPrefix == channelPrefix) {
+                return const CommandResult.fail(
+                  'that doorbell is already added',
+                );
+              }
+            } else if (existing.isSensor && existing.entity == entity) {
+              return const CommandResult.fail(
+                'that doorbell is already added',
+              );
+            }
+          }
           signatures.add(signature);
           await _settings.set(
             defs.doorbellSignatures,
@@ -479,6 +512,14 @@ class DoorbellManager extends Manager {
           if (_pendingTest != null) {
             return const CommandResult.fail('a test is already running');
           }
+          // A ring's click job may still be running natively: a Test
+          // started over it would cancel the ring's click.
+          if (_clickBusyUntil != null &&
+              clock().isBefore(_clickBusyUntil!)) {
+            return const CommandResult.fail(
+              'a doorbell is opening, try again in a moment',
+            );
+          }
           // The pending test is in place before anything is awaited, so
           // a second Test cannot start while this one runs, and a click
           // result pushed from inside the launch call is caught too.
@@ -495,8 +536,7 @@ class DoorbellManager extends Manager {
             if (!opened.ok) {
               result = 'launch_failed';
             } else {
-              final delay =
-                  _settings.get(defs.doorbellClickDelaySeconds).toInt();
+              final delay = _clickDelay;
               try {
                 final answer = await pending.completer.future.timeout(
                   Duration(seconds: delay) + testAnswerMargin,
@@ -575,6 +615,9 @@ class DoorbellManager extends Manager {
             await _saveActivity(pending.doorbellId, 'test', result, '');
             return null;
           }
+          // The ring's click has answered: its job is no longer running
+          // natively, so a Test may start again.
+          _clickBusyUntil = null;
           final id = _clickRings[key];
           String? doorbell;
           if (id != null) {
@@ -785,6 +828,13 @@ class DoorbellManager extends Manager {
       );
       return;
     }
+    if (_pendingTest != null) {
+      log.info(
+        name,
+        "ring from '${saved.entity}' ignored while a test runs",
+      );
+      return;
+    }
     if (_recentlyOpened(saved.id)) {
       log.info(
         name,
@@ -811,6 +861,9 @@ class DoorbellManager extends Manager {
     }
     await commands.execute('screenOn', const {});
     final result = await _openByClick(saved);
+    if (result.ok) {
+      _clickBusyUntil = clock().add(Duration(seconds: _clickDelay + 15 + 5));
+    }
     bus.publish(HaEventRequested('kiosk_satellite_doorbell', {
       'event_type': 'ringing',
       'doorbell': saved.label,
@@ -922,7 +975,7 @@ class DoorbellManager extends Manager {
     final opening = Completer<void>();
     _opening = opening.future;
     try {
-      final delay = _settings.get(defs.doorbellClickDelaySeconds).toInt();
+      final delay = _clickDelay;
       var returnAfter =
           _settings.get(defs.doorbellSensorReturnSeconds).toInt();
       final clickWait = delay + 15 + 10;
