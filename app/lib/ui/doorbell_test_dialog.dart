@@ -281,22 +281,26 @@ Future<bool> showDoorbellTestDialog(
             ],
           );
         }
-        return AlertDialog(
-          title: Text('Test $label'),
-          content: SizedBox(width: 420, child: content),
-          actions: [
-            TextButton(
-              onPressed: running ? null : () => Navigator.pop(dialogContext),
-              child: const Text('Close'),
-            ),
-            if (!running)
+        // Back must not close the dialog while the native test still runs.
+        return PopScope(
+          canPop: !running,
+          child: AlertDialog(
+            title: Text('Test $label'),
+            content: SizedBox(width: 420, child: content),
+            actions: [
               TextButton(
-                onPressed: busy
-                    ? null
-                    : () => unawaited(runTest(dialogContext, setState)),
-                child: const Text('Test again'),
+                onPressed: running ? null : () => Navigator.pop(dialogContext),
+                child: const Text('Close'),
               ),
-          ],
+              if (!running)
+                TextButton(
+                  onPressed: busy
+                      ? null
+                      : () => unawaited(runTest(dialogContext, setState)),
+                  child: const Text('Test again'),
+                ),
+            ],
+          ),
         );
       },
     ),
