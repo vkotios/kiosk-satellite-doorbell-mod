@@ -6,6 +6,8 @@
   </picture>
 </h1>
 
+> **This is an unofficial fork of [jxlarrea/kiosk-satellite](https://github.com/jxlarrea/kiosk-satellite) that adds a doorbell feature:** when the doorbell rings, the kiosk wakes up and shows the doorbell camera. See [Doorbell mod](#doorbell-mod). Everything else is the upstream app, and the badges and links below point to the upstream project.
+
 <p align="center">
 <img src="https://img.shields.io/github/stars/jxlarrea/kiosk-satellite?style=for-the-badge&label=Stars&color=d6a102" alt="Stars">
 <a href="https://github.com/jxlarrea/kiosk-satellite/releases"><img src="https://img.shields.io/github/downloads/jxlarrea/kiosk-satellite/total?style=for-the-badge&label=Downloads&color=e8604c" alt="Downloads"></a>
@@ -29,6 +31,60 @@
 <p align="center">
   <img src="assets/ks-demo-lossy.gif" alt="Kiosk Satellite running on a Home Assistant display" width="650" />
 </p>
+
+## Doorbell mod
+
+This fork adds one feature to Kiosk Satellite: **doorbell video launch**. When your doorbell rings, the kiosk wakes the screen, opens the doorbell app's live camera over the dashboard without a touch, and comes back to the dashboard after a while (75 seconds by default). Home Assistant also gets an event for every ring (`esphome.kiosk_satellite_doorbell`), so you can build automations on it.
+
+### What it adds
+
+Two independent ways to detect the ring and open the camera. Each has its own switch (off by default), its own grant, its own settings and its own list of doorbells under **Settings > Doorbell** on the tablet, and the admin panel has a matching **Doorbell** tab. You can use either or both, for different doorbells.
+
+| | Launch by notifications | Launch by Home Assistant sensor & tap |
+| --- | --- | --- |
+| How it rings | The doorbell app posts its ring notification | A Home Assistant binary_sensor turns on while the doorbell rings |
+| How it opens | The kiosk taps the ring notification, which opens the camera's live view | The kiosk opens the doorbell app and taps the camera's card by its label |
+| What it needs | The **Notification access** grant | The **Doorbell click access** grant (an Android Accessibility service) and a ringing binary_sensor in Home Assistant |
+| How you add a doorbell | **Eufy Security** in one tap, or learn any app from a real ring | A five-step wizard that teaches the card by tapping it |
+
+Both come with a status line per doorbell, shown on the tablet and in the admin panel. A sensor & tap doorbell also has a **Test** button that runs the whole open the way a ring will, and lists the card names it could see when it cannot find the right one. While Lockdown Mode holds, a ring opens nothing and Home Assistant still gets the event, with `opened` set to false. The full reference is in [docs/doorbell.md](docs/doorbell.md).
+
+### Tested with Eufy only
+
+Everything in this fork was developed against, tested and validated with **Eufy Security** (`com.oceanwing.battery.cam`) on an **Amazon Fire tablet**, and with nothing else. No other doorbell app or device has been tried.
+
+The mod is built so other doorbell apps can be added, but whether one works depends on what that app and its Home Assistant integration offer:
+
+- **Notifications:** the app must post a notification when the doorbell rings, and tapping that notification must open the live view.
+- **Sensor & tap:** Home Assistant must expose a binary_sensor that is on while the doorbell rings (for example from the app's own Home Assistant integration), and the app must show a camera card with a text label the kiosk can tap.
+
+If the app offers neither, it cannot be used with this mod.
+
+### How to add a doorbell
+
+This fork publishes no APK. Build the app from source (it is a Flutter project in `app/`) and install it on the tablet; the Home Assistant setup is the same as upstream's [Get started](#get-started). Then open **Settings > Doorbell** on the tablet.
+
+**Notification doorbell**
+
+1. Turn on **Doorbell video launch by notifications**.
+2. Grant **Notification access** (the section shows the grant and opens Android's screen for it) and **Display over other apps**, which the kiosk needs to come back after the ring.
+3. Tap **Add doorbell**, then **Eufy Security** to save the Eufy app in one tap. For another app tap **Learn from a ring**, press your doorbell, wait up to 60 seconds for the kiosk to catch the notification, name the doorbell and **Save**.
+4. Make sure the doorbell app's ring notifications are allowed in Android's notification settings for that app. A blocked ring channel is never seen by the kiosk.
+5. Press the doorbell. The doorbell's status line says `Working. Last ring opened 12:10.` once a ring has opened.
+
+**Home Assistant sensor & tap doorbell**
+
+1. Make sure the kiosk is connected to Home Assistant, and that Home Assistant has a binary_sensor that is on while the doorbell rings.
+2. Turn on **Doorbell video launch by Home Assistant sensor & tap**.
+3. Turn on **Doorbell click access** in Android's Accessibility settings (the section's **Open** button takes you there) and grant **Display over other apps**.
+4. Tap **Add doorbell** and follow the wizard: choose the doorbell app (**Eufy Security** or its Android package), allow the kiosk to tap, tap the camera of this doorbell in the app so the kiosk learns its card, name the doorbell and pick its binary_sensor, then **Save and test**.
+5. Press **Test** on the doorbell's row at any time. It ends with `Ready. Last tested OK 12:10.` or the reason it could not tap the card.
+
+For two cameras of one app (a front and a back door), add two doorbells with different sensors and different cards.
+
+**Amazon Fire tablets: turn off the lock screen.** A tablet that went to sleep wakes onto its lock screen, and Fire OS only lets Amazon-signed apps dismiss it. The doorbell app then opens behind the lock screen and the tap fails (`click_failed`, reason `wrong_app`). With wireless debugging on, run `adb shell locksettings set-disabled true`, then reboot the tablet. This was done and checked on a Fire tablet that has no PIN set; it removes the swipe-to-unlock screen.
+
+If a ring does not open, see [If a Ring Does Not Open](docs/doorbell.md#if-a-ring-does-not-open).
 
 ## Features
 

@@ -127,4 +127,5 @@ A sensor ring does not open when:
 - A different screen was showing: the doorbell app never came to the front during the search. The ring reports `click_failed` with reason `wrong_app`.
 - The screen stayed off, so the camera opens on a dark panel.
 - **Display over other apps** is not granted, so the kiosk cannot come back after the ring.
+- The tablet's lock screen is on. On Amazon Fire tablets only Amazon-signed apps may dismiss it, so the doorbell app opens behind it and the ring reports `click_failed` with reason `wrong_app`. Turn the lock screen off with `adb shell locksettings set-disabled true`, then reboot the tablet.
 - The sensor gaps: a ring while Home Assistant is disconnected is not seen, and a sensor that is already on when the kiosk connects does not ring.
