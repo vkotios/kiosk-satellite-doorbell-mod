@@ -1,6 +1,6 @@
 # Home Assistant Events
 
-Kiosk Satellite fires an event on the Home Assistant bus whenever a voice turn, a timer, an intercom call, an alarm, the screensaver or the screen changes. Automations can trigger on them with an event trigger. They go out over the ESPHome connection, so turn on **Settings > ESPHome** and add the kiosk to Home Assistant first. **Expose kiosk entities** is not needed.
+Kiosk Satellite fires an event on the Home Assistant bus whenever a voice turn, a timer, an intercom call, an alarm, a doorbell, the screensaver or the screen changes. Automations can trigger on them with an event trigger. They go out over the ESPHome connection, so turn on **Settings > ESPHome** and add the kiosk to Home Assistant first. **Expose kiosk entities** is not needed.
 
 Home Assistant only fires device events under `esphome.`, hence the prefix. Every event carries `event_type` with what happened. Home Assistant adds `device_id`, the kiosk's ESPHome device. Use `device_id` to react to one kiosk only. You can find it in the URL of the kiosk's device page.
 
@@ -10,6 +10,7 @@ Home Assistant only fires device events under `esphome.`, hence the prefix. Ever
 | [`esphome.kiosk_satellite_timer`](#timers) | Voice Satellite timers |
 | [`esphome.kiosk_satellite_intercom`](#intercom) | Intercom calls and announcements |
 | [`esphome.kiosk_satellite_alarm`](#alarms) | Alarms |
+| [`esphome.kiosk_satellite_doorbell`](#doorbell) | A doorbell ring |
 | [`esphome.kiosk_satellite_screensaver`](#screensaver) | The screensaver |
 | [`esphome.kiosk_satellite_screen`](#screen) | The screen turning on and off |
 
@@ -85,6 +86,40 @@ data:
 ## Alarms
 
 `esphome.kiosk_satellite_alarm` fires once per alarm whenever it is created, changed, deleted, starts its sunrise, rings, is snoozed, stopped or silenced. It carries `alarm_id`, `label`, `time`, `days` and `enabled`. See [Alarm events](alarms.md#alarm-events) for the fields and an example.
+
+## Doorbell
+
+```yaml
+event_type: esphome.kiosk_satellite_doorbell
+data:
+  device_id: 5f1c...
+  event_type: ringing
+  doorbell: Front door
+  label: Front door
+  opened: true
+  trigger: notification
+  open: tap
+```
+
+| `event_type` | When |
+| --- | --- |
+| `ringing` | A doorbell rang, from its app's notification or from its Home Assistant sensor. It goes out when the open has started. |
+| `click_failed` | A ring that opened by the card could not tap it. It follows a `ringing` only when the card was not tapped. |
+
+`doorbell` is the title of the ring notification, or the name you saved the doorbell under when a sensor rang it. `label` is the name you saved the doorbell under (the title when it cannot be told), `opened` whether the kiosk opened the ring, `trigger` what rang it (`notification` or `entity`) and `open` how it opens (`tap` or `click`). On `click_failed`, `label` is the card it looked for and `reason` why the tap did not land: `not_found`, `wrong_app` or `service_off`. See [Doorbell](doorbell.md) for the feature.
+
+```yaml
+# Turn the porch light on when the doorbell rings.
+triggers:
+  - trigger: event
+    event_type: esphome.kiosk_satellite_doorbell
+    event_data:
+      event_type: ringing
+actions:
+  - action: light.turn_on
+    target:
+      entity_id: light.porch
+```
 
 ## Screensaver
 

@@ -992,9 +992,13 @@ class KioskBackPressed extends AppEvent {
 /// clock off it (issue #114) and the kiosk manager's foreground reclaim
 /// lets the pause that follows stand (issue #417). [package] is the app's
 /// package, or the URI itself for a deep link, whose app is unknown.
+/// [returnAfterSeconds] is a launch that names its own idle time (a doorbell
+/// ring): the auto-return then runs with that time whatever the launcher's
+/// own switches say.
 class AppLaunched extends AppEvent {
-  const AppLaunched({required this.package});
+  const AppLaunched({required this.package, this.returnAfterSeconds});
   final String package;
+  final int? returnAfterSeconds;
 }
 
 /// The system's home-role dialog came back (issue #219). [held] is what

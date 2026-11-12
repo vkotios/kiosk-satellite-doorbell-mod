@@ -110,7 +110,9 @@ class SystemPermissions {
 
   /// "Notification access": reading other apps' media sessions, for the
   /// Media Session player source. The grant names a listener service that
-  /// reads no notifications; Android simply lists sessions to no one else.
+  /// reads no notifications for the Media Player; the Doorbell reads those
+  /// of its saved doorbell apps (and any app during a capture). Android
+  /// simply lists sessions to no one else.
   final bool notificationAccess;
 
   /// Whether the device has a settings screen for the overlay grant and

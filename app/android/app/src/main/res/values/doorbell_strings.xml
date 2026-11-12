@@ -1,0 +1,4 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="doorbell_click_description" formatted="false">Opens your doorbell app and taps the camera you saved when a doorbell rings. It reads that app\'s screen only while it does so, and ignores every other app.</string>
+</resources>

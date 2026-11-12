@@ -17,6 +17,8 @@ import 'managers/browser/browser_manager.dart';
 import 'managers/camera/camera_manager.dart';
 import 'managers/device/device_manager.dart';
 import 'managers/device_camera/device_camera_manager.dart';
+import 'managers/doorbell/doorbell_entity_manager.dart';
+import 'managers/doorbell/doorbell_manager.dart';
 import 'managers/btproxy/bt_proxy_manager.dart';
 import 'managers/airplay/airplay_manager.dart';
 import 'managers/dlna/dlna_manager.dart';
@@ -105,6 +107,15 @@ class AppContainer {
     browser.urlMapper = proxy.mapUrl;
     kiosk = KioskManager(bus, commands, log, settings);
     launcher = AppLauncherManager(bus, commands, log, settings);
+    doorbell = DoorbellManager(bus, commands, log, settings);
+    doorbellEntities = DoorbellEntityManager(
+      bus,
+      commands,
+      log,
+      settings,
+      homeAssistant,
+      doorbell,
+    );
     homeLauncher = HomeLauncherManager(bus, commands, log, settings);
     gestures = GesturesManager(bus, commands, log, settings);
     screensaver = ScreensaverManager(
@@ -302,6 +313,8 @@ class AppContainer {
   late final CameraManager camera;
   late final KioskManager kiosk;
   late final AppLauncherManager launcher;
+  late final DoorbellManager doorbell;
+  late final DoorbellEntityManager doorbellEntities;
   late final HomeLauncherManager homeLauncher;
   late final GesturesManager gestures;
   late final ScreensaverManager screensaver;
@@ -367,6 +380,11 @@ class AppContainer {
     // After kiosk: it listens for the AppLaunched its launchApp emits,
     // and its bringToFront/screenOn calls resolve at execute time.
     launcher,
+    // After kiosk and launcher: a ring runs openNotificationAction and then
+    // relies on the launcher's auto-return; commands resolve at execute time.
+    doorbell,
+    // After doorbell: a ring from its entity calls ringFromEntity.
+    doorbellEntities,
     // Same placement logic: its role relays arrive as bus events KioskManager
     // forwards, and its acquire path invokes the kiosk_lock channel.
     homeLauncher,

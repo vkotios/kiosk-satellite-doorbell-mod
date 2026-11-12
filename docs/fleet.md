@@ -146,6 +146,7 @@ Certain settings remain unique to each kiosk regardless of the profile configura
 | Celestial view and last GPS position | `screensaver.celestial_view`, `screensaver.celestial_last_gps` |
 | Voice Satellite chimes | `voice_chimes.wake`, `voice_chimes.done`, `voice_chimes.error`, `voice_chimes.alert`, `voice_chimes.announce` |
 | Diagnostics | `wake_word.diagnostics` |
+| Doorbell status | `internal.doorbell_activity` |
 | Wake word arbitration offset | `voice.wake_arbitration_offset_db` |
 | Wake word fine-tune | `voice.wake_word_fine_tune` |
 | Stop word fine-tune | `voice.stop_word_fine_tune` |

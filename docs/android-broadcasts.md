@@ -1,6 +1,6 @@
 # Android Broadcasts
 
-Kiosk Satellite sends an Android broadcast whenever a voice turn, a timer, an intercom call, an alarm, the screensaver or the screen changes. Apps on the same device, such as Tasker, MacroDroid, Automate or tvQuickActions, can react right away without a round trip through Home Assistant. A common use is bringing your own app back to the front the moment a voice turn ends.
+Kiosk Satellite sends an Android broadcast whenever a voice turn, a timer, an intercom call, an alarm, a doorbell ring, the screensaver or the screen changes. Apps on the same device, such as Tasker, MacroDroid, Automate or tvQuickActions, can react right away without a round trip through Home Assistant. A common use is bringing your own app back to the front the moment a voice turn ends.
 
 Every action starts with `me.jxl.kiosk_satellite.event.`, so the full name of `VS_ENDED` is `me.jxl.kiosk_satellite.event.VS_ENDED`. Details ride along as intent extras. Strings stay strings, numbers stay numbers and lists arrive as string lists.
 
@@ -64,6 +64,15 @@ Every intercom broadcast carries `kiosk`, the other kiosk's name when there is o
 
 The extras are the fields of the [`esphome.kiosk_satellite_alarm`](alarms.md#alarm-events) event: `alarm_id`, `label`, `time`, `days` and `enabled`, plus `snoozed_until` on `ALARM_SNOOZED`. Each alarm sends its own broadcast when several change at once.
 
+## Doorbell
+
+| Action | When |
+| --- | --- |
+| `DOORBELL_RINGING` | A doorbell rang, from its app's notification or from its Home Assistant sensor. |
+| `DOORBELL_CLICK_FAILED` | A ring that opened by the card could not tap it. |
+
+The extras are the fields of the [`esphome.kiosk_satellite_doorbell`](doorbell.md#home-assistant-and-android) event: `doorbell`, `label`, `opened`, `trigger` and `open` on `DOORBELL_RINGING`, and `doorbell`, `label` and `reason` on `DOORBELL_CLICK_FAILED`.
+
 ## Screensaver
 
 | Action | When |
@@ -92,6 +101,6 @@ To check what the kiosk sends, open the App Logs and look for lines tagged `broa
 
 ## Notes
 
-- Any app on the device can receive these broadcasts, including the timer names, alarm labels and kiosk names in their extras.
+- Any app on the device can receive these broadcasts, including the timer names, alarm labels, doorbell names and kiosk names in their extras.
 - Android 8 and later only delivers them to apps that listen while running. Tasker, MacroDroid, Automate and tvQuickActions all do. An app that only declares a receiver in its manifest will not get them.
 - They work while Kiosk Satellite is running, even with another app in front.

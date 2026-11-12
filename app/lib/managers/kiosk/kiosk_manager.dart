@@ -108,6 +108,7 @@ class KioskManager extends Manager with WidgetsBindingObserver {
   static const _mediaSessionsChannel = MethodChannel(
     'kiosk_satellite/media_sessions',
   );
+  static const _doorbellChannel = MethodChannel('kiosk_satellite/doorbell');
 
   @override
   String get name => 'kiosk';
@@ -249,6 +250,98 @@ class KioskManager extends Manager with WidgetsBindingObserver {
               'package': package,
             }),
             notOpened: '$package is not installed, or has no app to open',
+            unavailable: 'opening apps is Android-only',
+          );
+        },
+      ),
+    );
+
+    commands.register(
+      Command(
+        name: 'openNotificationAction',
+        description:
+            'Fire the tap action of a ring notification the doorbell '
+            'listener is holding, so the app that rang opens on the right '
+            'camera over the kiosk. Unpins first like launchApp. Fails when '
+            'the notification is gone or Android refuses the tap.',
+        params: const {
+          'key': 'Notification key the doorbell ring reported',
+          'package': 'Android package of the app that rang',
+          'label': 'What to call the ring in the log',
+          'returnAfterSeconds':
+              'Idle seconds before the kiosk comes back; omit to use the '
+              "launcher's own return",
+        },
+        handler: (p) async {
+          final key = '${p['key'] ?? ''}'.trim();
+          if (key.isEmpty) return const CommandResult.fail('key required');
+          final package = '${p['package'] ?? ''}'.trim();
+          final label = '${p['label'] ?? ''}'.trim();
+          return _openOverKiosk(
+            what: label.isEmpty ? 'notification $key' : label,
+            package: package.isEmpty ? null : package,
+            returnAfterSeconds: (p['returnAfterSeconds'] as num?)?.toInt(),
+            open: () =>
+                _doorbellChannel.invokeMethod<bool>('fire', {'key': key}),
+            notOpened: 'the notification is gone, or its tap action was refused',
+            unavailable: 'opening a notification is Android-only',
+          );
+        },
+      ),
+    );
+
+    commands.register(
+      Command(
+        name: 'openAppAndClick',
+        description:
+            'Open another Android app fresh, wait, and tap the card whose '
+            'label matches: the kiosk itself calls it for a doorbell '
+            'ring, remote callers are refused; a saved doorbell is how '
+            'an admin names an app and a card. Unpins first like '
+            'launchApp. Needs Doorbell click access. Fails when the app '
+            'is not installed or Android refuses.',
+        params: const {
+          'package': 'Android package of the doorbell app',
+          'label': 'The label of the card to tap',
+          'delaySeconds':
+              'Seconds to wait after the app opens before looking for '
+              'the card, default 8, clamped to 0..120; the search window '
+              'is fixed at 15 seconds',
+          'returnAfterSeconds':
+              'Idle seconds before the kiosk comes back; omit to use the '
+              "launcher's own return",
+          'reportCards':
+              'Whether the click service reports the names of the cards '
+              'it could see when it cannot find the card, for the '
+              'doorbell Test; default false',
+        },
+        handler: (p) async {
+          final package = '${p['package'] ?? ''}'.trim();
+          if (package.isEmpty) {
+            return const CommandResult.fail('package required');
+          }
+          final label = '${p['label'] ?? ''}'.trim();
+          if (label.isEmpty) {
+            return const CommandResult.fail('label required');
+          }
+          var delaySeconds = (p['delaySeconds'] as num?)?.toInt() ?? 8;
+          if (delaySeconds < 0) delaySeconds = 0;
+          if (delaySeconds > 120) delaySeconds = 120;
+          final returnAfterSeconds = (p['returnAfterSeconds'] as num?)?.toInt();
+          final reportCards = p['reportCards'] == true;
+          return _openOverKiosk(
+            what: label,
+            package: package,
+            returnAfterSeconds: returnAfterSeconds,
+            open: () => _doorbellChannel.invokeMethod<bool>('launchAndClick', {
+              'package': package,
+              'label': label,
+              'delaySeconds': delaySeconds,
+              'windowSeconds': 15,
+              'reportCards': reportCards,
+            }),
+            notOpened: '$package is not installed, or Android refused to '
+                'open it',
             unavailable: 'opening apps is Android-only',
           );
         },
@@ -813,6 +906,7 @@ class KioskManager extends Manager with WidgetsBindingObserver {
   Future<CommandResult> _openOverKiosk({
     required String what,
     String? package,
+    int? returnAfterSeconds,
     required Future<bool?> Function() open,
     required String notOpened,
     required String unavailable,
@@ -829,7 +923,12 @@ class KioskManager extends Manager with WidgetsBindingObserver {
       // Stamped here as well as off the bus: the pause can land before
       // the bus delivers, and a late stamp is a reclaim that fires.
       _appLaunchedAt = DateTime.now();
-      bus.publish(AppLaunched(package: package ?? what));
+      bus.publish(
+        AppLaunched(
+          package: package ?? what,
+          returnAfterSeconds: returnAfterSeconds,
+        ),
+      );
       return const CommandResult.ok();
     } on PlatformException catch (e) {
       if (wasPinned) await _apply();

@@ -52,6 +52,7 @@ import 'color_picker.dart';
 import 'celestial_settings.dart';
 import 'weather_mood_settings.dart';
 import 'date_picker.dart';
+import 'doorbell_page.dart';
 import 'gesture_settings.dart';
 import 'entity_picker.dart';
 import 'glance_rows.dart';
@@ -316,6 +317,12 @@ const _categories = <(String, String, Object, String)>[
     'App Launcher',
     Icons.apps_outlined,
     'Open other apps from the kiosk',
+  ),
+  (
+    'Doorbell',
+    'Doorbell',
+    Icons.notifications_active_outlined,
+    'Open a doorbell app on a ring',
   ),
   ('Gestures', 'Gestures', Icons.gesture, 'Touch, palm and clap gestures'),
   (
@@ -2636,28 +2643,34 @@ class _CategoryContentState extends State<_CategoryContent> {
                 ),
               ],
             ),
-          ..._withEsphomeStartError(
-            _sectionedCards(
-              container,
-              // With the Camera master switch off (or no camera on the
-              // device at all), motion detection cannot run: the dismiss
-              // switch renders disabled (below) with the reason, instead of
-              // lying enabled; its tuning rows live in the Camera section
-              // now and hide with the master there. A camera-less device
-              // keeps only the disabled master switch.
-              widget.category == 'Camera' &&
-                      container.deviceCamera.cameraKnownAbsent
-                  ? const [cameraEnabled]
-                  : _inlineDefsFor(widget.category),
-              () => setState(() {}),
-              replace: _rowReplacements(container),
-              after: _rowExtras(container),
-              before: {
-                if (widget.category == 'Screensaver')
-                  screensaverWidgets.key: ?_pluginScreensaverEntry(container),
-              },
+          // The Doorbell page is its own two sections, not the generic
+          // settings cards: each section's switch carries its grant,
+          // its settings and its doorbells.
+          if (widget.category == 'Doorbell')
+            ...doorbellSections(container, () => setState(() {}))
+          else
+            ..._withEsphomeStartError(
+              _sectionedCards(
+                container,
+                // With the Camera master switch off (or no camera on the
+                // device at all), motion detection cannot run: the dismiss
+                // switch renders disabled (below) with the reason, instead of
+                // lying enabled; its tuning rows live in the Camera section
+                // now and hide with the master there. A camera-less device
+                // keeps only the disabled master switch.
+                widget.category == 'Camera' &&
+                        container.deviceCamera.cameraKnownAbsent
+                    ? const [cameraEnabled]
+                    : _inlineDefsFor(widget.category),
+                () => setState(() {}),
+                replace: _rowReplacements(container),
+                after: _rowExtras(container),
+                before: {
+                  if (widget.category == 'Screensaver')
+                    screensaverWidgets.key: ?_pluginScreensaverEntry(container),
+                },
+              ),
             ),
-          ),
           // No setting draws the URL Filter, so its row is placed here,
           // last on the page.
           if (widget.category == 'Browser')
@@ -9954,16 +9967,20 @@ class _DevicePermissionsTileState extends State<_DevicePermissionsTile>
           onGrant: () => _requestVia('usageAccess'),
         ),
         // The Local Media Session player reads other apps' sessions
-        // through it, so it counts as missing only while it is picked.
+        // through it, so it counts as missing only while it is picked;
+        // the Doorbell reads rings through it too.
         _row(
           granted: perms?.notificationAccess,
-          needed: _localSessionPicked(widget.container),
+          needed:
+              _localSessionPicked(widget.container) ||
+              settings.get(doorbellEnabled),
           missingIcon: Icons.notifications_off_outlined,
           title: devicePermissionDescriptions['notificationAccess']!.title,
           held: devicePermissionDescriptions['notificationAccess']!.description,
           missing:
-              'Without this Android lists no media sessions, so Now '
-              'Playing cannot follow the apps playing on this device.',
+              'Without this Android lists no media sessions and the '
+              'Doorbell sees no rings, so Now Playing cannot follow the '
+              'apps playing on this device and a ring never opens its app.',
           idle: 'Lets Now Playing follow the apps playing on this device.',
           onGrant: () => _requestVia('notificationAccess'),
         ),

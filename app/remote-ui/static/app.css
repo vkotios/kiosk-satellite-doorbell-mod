@@ -244,6 +244,7 @@
     transform: none; }
   .btn-ghost:disabled:hover, .btn-text:disabled:hover,
   .icon-btn:disabled:hover { background: transparent; color: inherit; }
+  .btn-ghost[hidden] { display: none; }
   button:focus-visible { outline: 2px solid var(--primary);
     outline-offset: 3px; }
   /* Icon buttons: the device's IconButton, a 40 borderless disc with a

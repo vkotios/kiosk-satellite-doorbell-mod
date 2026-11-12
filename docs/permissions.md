@@ -32,11 +32,12 @@ The only update-related permission that requires manual user intervention is **I
 | Modify system settings | Allows the app to adjust the panel's actual hardware brightness rather than simply dimming the application window. |
 | All files access | Grants access to the root directory in the built-in File Manager. Without it, the File Manager is restricted to the app's own internal storage folder. This applies to Android 11 and newer; older versions rely on standard storage permissions. |
 | Usage access | Enables the ESPHome **Foreground app** sensor to identify whichever application is currently visible on screen. Without it, the sensor will only report Kiosk Satellite while it is in front. |
-| Notification access | Lets the Media Player's **Local Media Session** follow other apps playing on the device and lets the App Launcher's **Wait during media and calls** hold the return while another app plays video or music. Android only lists other apps' media sessions to an app with this grant. Kiosk Satellite reads no notifications with it. See [Media Player](sendspin.md#local-media-session). |
+| Notification access | Lets the Media Player's **Local Media Session** follow other apps playing on the device, lets the App Launcher's **Wait during media and calls** hold the return while another app plays video or music, and lets the [Doorbell](doorbell.md) open the live view of a ringing doorbell app. Android only lists other apps' media sessions to an app with this grant. Kiosk Satellite reads no notifications with it, except while Doorbell is on, when it looks at the notifications of the doorbell apps you saved (and, for up to 60 seconds while you capture a new one, any app). See [Media Player](sendspin.md#local-media-session). |
 | Device admin | Enables true **Screen off** functionality, powering down the display panel rather than simply rendering a black overlay. |
 | Location | Required for ESPHome [location sensors](esphome.md#gps-sensor) (off by default), dashboard pages requesting location, and Bluetooth scanning across all Android versions (as required by the OS). |
 | Nearby devices | Controls the Bluetooth scan and connect operations for the [Bluetooth proxy](esphome.md). This is a runtime prompt on Android 12 and newer. On older versions, it is granted at installation, though Android still requires Location permissions and active location services to return scan results. |
 | System UI guard | An optional accessibility service that forcibly closes the notification shade and recent apps screen while kiosk protections are active. See [Kiosk and Lockdown](kiosk.md#required-system-permissions). |
+| Doorbell click access | An accessibility service that taps the camera card you saved when a doorbell rings, so a ring can open the doorbell app's live view without a notification tap. Grant it from **Settings > Doorbell** with the **Doorbell video launch by Home Assistant sensor & tap** section on: the **Doorbell click access** row's **Open** button opens Android's Accessibility settings, where the service is listed under Kiosk Satellite. It reads the doorbell app's screen only while it taps the card or while you teach it one, and does nothing in any other app. See [Doorbell](doorbell.md). |
 | Media library | Grants read access to local folders selected for the Local Media screensaver. |
 | Log access | Specifically for hardware with native person sensors (such as Meta Portals). It reads system logs for the Person Sensor and the screensaver's Person Detection feature. This can only be granted via `adb` and takes effect after an app restart. See [Meta Portal](portal.md). |
 
@@ -95,6 +96,13 @@ The System UI guard operates as an accessibility service, so it is enabled by wr
 
 ```
 adb shell settings put secure enabled_accessibility_services me.jxl.kiosk_satellite/me.jxl.kiosk_satellite.KioskAccessibilityService
+adb shell settings put secure accessibility_enabled 1
+```
+
+The Doorbell click access service is enabled the same way, and the same warning applies: the command replaces the whole list, so a tablet that uses both services must name them both, separated by a colon:
+
+```
+adb shell settings put secure enabled_accessibility_services me.jxl.kiosk_satellite/me.jxl.kiosk_satellite.KioskAccessibilityService:me.jxl.kiosk_satellite/me.jxl.kiosk_satellite.DoorbellClickService
 adb shell settings put secure accessibility_enabled 1
 ```
 
